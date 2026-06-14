@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
+  ArrowDownIcon,
   BoxesIcon,
   CheckCircle2Icon,
   CopyIcon,
@@ -25,7 +26,6 @@ import {
   useState,
   type CSSProperties,
   type FormEvent,
-  type RefObject,
   type ReactNode,
 } from "react";
 import { toast } from "sonner";
@@ -113,8 +113,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Switch } from "@/components/ui/switch";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 type AuthConfig =
   | { method: "agent" }
@@ -226,6 +228,13 @@ type DockerLogStopped = {
 
 type DockerLogEntry = DockerLogChunk;
 
+type DockerLogRow = {
+  key: string;
+  number: number;
+  stream: DockerLogStream;
+  text: string;
+};
+
 type ServerForm = {
   name: string;
   host: string;
@@ -322,7 +331,6 @@ function App() {
   const [logLines, setLogLines] = useState<DockerLogEntry[]>([]);
   const [logError, setLogError] = useState<string | null>(null);
   const activeLogSessionIdRef = useRef<string | null>(null);
-  const logEndRef = useRef<HTMLSpanElement | null>(null);
 
   const selectedServer = useMemo(
     () => servers.find((server) => server.id === selectedServerId) ?? null,
@@ -465,14 +473,6 @@ function App() {
       }
     };
   }, []);
-
-  useEffect(() => {
-    if (!logDialogOpen) {
-      return;
-    }
-
-    logEndRef.current?.scrollIntoView({ block: "end" });
-  }, [logDialogOpen, logLines]);
 
   async function runAction<T>(
     label: string,
@@ -1584,7 +1584,6 @@ function App() {
         />
         <ContainerLogsDialog
           container={logContainer}
-          endRef={logEndRef}
           error={logError}
           lines={logLines}
           onOpenChange={setContainerLogsOpen}
@@ -1628,7 +1627,6 @@ function ConfirmDeleteDialog({
 
 function ContainerLogsDialog({
   container,
-  endRef,
   error,
   lines,
   onOpenChange,
@@ -1636,7 +1634,6 @@ function ContainerLogsDialog({
   session,
 }: {
   container: DockerContainer | null;
-  endRef: RefObject<HTMLSpanElement | null>;
   error: string | null;
   lines: DockerLogEntry[];
   onOpenChange: (open: boolean) => void;
@@ -1644,6 +1641,69 @@ function ContainerLogsDialog({
   session: DockerLogSession | null;
 }) {
   const status = session ? "Live" : error ? "Stopped" : "Loading";
+  const rows = useMemo(() => dockerLogRows(lines), [lines]);
+  const [followTail, setFollowTail] = useState(true);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [wrapLines, setWrapLines] = useState(true);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    setFollowTail(true);
+    setShowScrollToBottom(false);
+    scheduleScrollLogsToBottom("auto");
+  }, [open, session?.sessionId]);
+
+  useEffect(() => {
+    if (!open || !followTail) {
+      return;
+    }
+
+    scheduleScrollLogsToBottom("auto");
+  }, [followTail, lines.length, open, wrapLines]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!open || !viewport) {
+      return;
+    }
+
+    const handleScroll = () => {
+      const atBottom = isLogViewportAtBottom(viewport);
+      setFollowTail(atBottom);
+      setShowScrollToBottom(!atBottom);
+    };
+
+    viewport.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+
+    return () => {
+      viewport.removeEventListener("scroll", handleScroll);
+    };
+  }, [open, session?.sessionId]);
+
+  function scrollLogsToBottom(behavior: ScrollBehavior = "smooth") {
+    const viewport = viewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    viewport.scrollTo({
+      behavior,
+      top: viewport.scrollHeight,
+    });
+    setFollowTail(true);
+    setShowScrollToBottom(false);
+  }
+
+  function scheduleScrollLogsToBottom(behavior: ScrollBehavior = "auto") {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => scrollLogsToBottom(behavior));
+    });
+  }
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -1660,40 +1720,99 @@ function ContainerLogsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={session ? "default" : error ? "destructive" : "secondary"}>
-            {status}
-          </Badge>
-          {container?.status && <Badge variant="outline">{container.status}</Badge>}
-          {session?.startedAt && (
-            <span className="text-xs text-muted-foreground">
-              Started {formatTime(session.startedAt)}
-            </span>
-          )}
-        </div>
-
-        <ScrollArea className="min-w-0 max-w-full overflow-hidden rounded-lg border bg-muted/30 h-[min(65vh,32rem)]">
-          <pre className="min-h-full min-w-0 max-w-full overflow-hidden p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all [overflow-wrap:anywhere]">
-            {lines.length ? (
-              lines.map((line, index) => (
-                <span
-                  className={dockerLogStreamClass(line.stream)}
-                  key={`${line.timestamp}-${index}`}
-                >
-                  {renderAnsiText(line.text, `${line.timestamp}-${index}`)}
-                </span>
-              ))
-            ) : (
-              <span className="text-muted-foreground">
-                {session ? "Waiting for logs..." : "Loading logs..."}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant={session ? "default" : error ? "destructive" : "secondary"}>
+              {status}
+            </Badge>
+            {container?.status && <Badge variant="outline">{container.status}</Badge>}
+            {session?.startedAt && (
+              <span className="text-xs text-muted-foreground">
+                Started {formatTime(session.startedAt)}
               </span>
             )}
-            {error && (
-              <span className="block pt-2 text-destructive">{error}</span>
-            )}
-            <span ref={endRef} />
-          </pre>
-        </ScrollArea>
+          </div>
+          <Field className="ml-auto gap-2" orientation="horizontal">
+            <Switch
+              checked={wrapLines}
+              id="logs-wrap-lines"
+              onCheckedChange={setWrapLines}
+              size="sm"
+            />
+            <FieldLabel htmlFor="logs-wrap-lines">Wrap lines</FieldLabel>
+          </Field>
+        </div>
+
+        <div className="relative min-w-0 max-w-full">
+          <ScrollArea
+            className="min-w-0 max-w-full overflow-hidden rounded-lg border bg-muted/30 h-[min(65vh,32rem)]"
+            scrollbars="both"
+            viewportRef={viewportRef}
+          >
+            <div
+              className={cn(
+                "min-h-full font-mono text-xs leading-relaxed",
+                wrapLines ? "min-w-0" : "min-w-max",
+              )}
+            >
+              {rows.length ? (
+                rows.map((row) => (
+                  <div
+                    className={cn(
+                      "group/log-row grid border-b border-border/30 hover:bg-muted/60",
+                      wrapLines
+                        ? "grid-cols-[4.25rem_minmax(0,1fr)]"
+                        : "grid-cols-[4.25rem_auto] min-w-max",
+                    )}
+                    data-log-row=""
+                    key={row.key}
+                  >
+                    <span className="select-none border-r border-border/30 bg-muted/20 px-2 py-0.5 text-right tabular-nums text-muted-foreground group-hover/log-row:text-foreground">
+                      {row.number}
+                    </span>
+                    <code
+                      className={cn(
+                        "block min-w-0 px-3 py-0.5",
+                        dockerLogStreamClass(row.stream),
+                        wrapLines
+                          ? "whitespace-pre-wrap break-all [overflow-wrap:anywhere]"
+                          : "whitespace-pre",
+                      )}
+                    >
+                      {renderAnsiText(row.text, row.key)}
+                    </code>
+                  </div>
+                ))
+              ) : (
+                <div className="p-3 text-muted-foreground">
+                  {session ? "Waiting for logs..." : "Loading logs..."}
+                </div>
+              )}
+              {error && (
+                <div className="grid grid-cols-[4.25rem_minmax(0,1fr)] border-b border-border/30 text-destructive">
+                  <span className="select-none border-r border-border/30 bg-muted/20 px-2 py-0.5 text-right tabular-nums text-muted-foreground">
+                    !
+                  </span>
+                  <code className="block min-w-0 px-3 py-0.5 whitespace-pre-wrap break-all [overflow-wrap:anywhere]">
+                    {error}
+                  </code>
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+          {showScrollToBottom && (
+            <Button
+              className="absolute right-4 bottom-4 shadow-lg"
+              onClick={() => scrollLogsToBottom("smooth")}
+              size="sm"
+              type="button"
+              variant="secondary"
+            >
+              <ArrowDownIcon data-icon="inline-start" />
+              Bottom
+            </Button>
+          )}
+        </div>
 
         <DialogFooter>
           <Button onClick={() => onOpenChange(false)} type="button" variant="outline">
@@ -2393,6 +2512,48 @@ function logTextToEntries(session: DockerLogSession): DockerLogEntry[] {
       timestamp: session.startedAt,
     },
   ];
+}
+
+function dockerLogRows(entries: DockerLogEntry[]): DockerLogRow[] {
+  const rows: DockerLogRow[] = [];
+  let currentText = "";
+  let currentStream: DockerLogStream = entries[0]?.stream ?? "stdout";
+
+  const flush = () => {
+    rows.push({
+      key: `log-row-${rows.length + 1}`,
+      number: rows.length + 1,
+      stream: currentStream,
+      text: currentText,
+    });
+    currentText = "";
+  };
+
+  entries.forEach((entry) => {
+    const parts = entry.text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+
+    parts.forEach((part, index) => {
+      if (index > 0) {
+        flush();
+        currentStream = entry.stream;
+      }
+
+      if (!currentText) {
+        currentStream = entry.stream;
+      }
+      currentText += part;
+    });
+  });
+
+  if (currentText) {
+    flush();
+  }
+
+  return rows;
+}
+
+function isLogViewportAtBottom(viewport: HTMLElement) {
+  return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 32;
 }
 
 function dockerLogStreamClass(stream: DockerLogStream) {
