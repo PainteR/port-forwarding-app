@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     io::{self, Read, Write},
-    net::{Shutdown, TcpListener, TcpStream},
+    net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -589,8 +589,47 @@ fn validate_forward(forward: &ForwardConfig) -> Result<(), String> {
 
 fn bind_local_listener(forward: &ForwardConfig) -> Result<TcpListener, String> {
     let bind_addr = format!("{}:{}", forward.bind_host, forward.bind_port);
-    TcpListener::bind(&bind_addr)
+    ensure_no_reachable_listener(forward)?;
+    TcpListener::bind((forward.bind_host.as_str(), forward.bind_port))
         .map_err(|error| format!("Local port {bind_addr} is unavailable: {error}"))
+}
+
+fn ensure_no_reachable_listener(forward: &ForwardConfig) -> Result<(), String> {
+    let bind_addr = format!("{}:{}", forward.bind_host, forward.bind_port);
+    for address in probe_addresses(forward)? {
+        if let Ok(stream) = TcpStream::connect_timeout(&address, Duration::from_millis(150)) {
+            let _ = stream.shutdown(Shutdown::Both);
+            return Err(format!(
+                "Local port {bind_addr} is unavailable: {address} already accepts TCP connections"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn probe_addresses(forward: &ForwardConfig) -> Result<Vec<SocketAddr>, String> {
+    let host = forward.bind_host.trim();
+    let port = forward.bind_port;
+    let candidates = match host {
+        "0.0.0.0" => vec!["127.0.0.1"],
+        "::" => vec!["::1", "127.0.0.1"],
+        _ => vec![host],
+    };
+
+    let mut addresses = Vec::new();
+    for candidate in candidates {
+        let resolved = (candidate, port).to_socket_addrs().map_err(|error| {
+            format!("Failed to resolve bind address {candidate}:{port}: {error}")
+        })?;
+        for address in resolved {
+            if !addresses.contains(&address) {
+                addresses.push(address);
+            }
+        }
+    }
+
+    Ok(addresses)
 }
 
 fn is_runtime_active(state: &RuntimeState) -> bool {
