@@ -17,7 +17,15 @@
         "width": 1600,
         "height": 1020,
         "minWidth": 980,
-        "minHeight": 680
+        "minHeight": 680,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 20
+        },
+        "theme": "Dark"
       }
     ],
     "security": {
@@ -26,7 +34,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "category": "DeveloperTool",
     "shortDescription": "Native SSH tunnel manager.",
     "longDescription": "Port Forward manages local, remote, dynamic, and Docker-backed SSH port forwards from a desktop UI.",

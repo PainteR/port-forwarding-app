@@ -75,11 +75,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import {
-  Field,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -269,13 +265,16 @@ type DeleteTarget =
   | { kind: "forward"; id: string; name: string }
   | { kind: "secret"; id: string; name: string };
 
-type ActionResult<T> =
-  | { ok: true; value: T }
-  | { ok: false };
+type ActionResult<T> = { ok: true; value: T } | { ok: false };
 
 type AnsiTextStyle = Pick<
   CSSProperties,
-  "backgroundColor" | "color" | "fontStyle" | "fontWeight" | "opacity" | "textDecoration"
+  | "backgroundColor"
+  | "color"
+  | "fontStyle"
+  | "fontWeight"
+  | "opacity"
+  | "textDecoration"
 >;
 
 const emptyServerForm: ServerForm = {
@@ -326,7 +325,9 @@ function App() {
   const [secretForm, setSecretForm] = useState<SecretForm>(emptySecretForm);
   const [busy, setBusy] = useState<string | null>(null);
   const [logDialogOpen, setLogDialogOpen] = useState(false);
-  const [logContainer, setLogContainer] = useState<DockerContainer | null>(null);
+  const [logContainer, setLogContainer] = useState<DockerContainer | null>(
+    null,
+  );
   const [logSession, setLogSession] = useState<DockerLogSession | null>(null);
   const [logLines, setLogLines] = useState<DockerLogEntry[]>([]);
   const [logError, setLogError] = useState<string | null>(null);
@@ -392,7 +393,10 @@ function App() {
       return;
     }
 
-    if (!selectedServerId || !servers.some((server) => server.id === selectedServerId)) {
+    if (
+      !selectedServerId ||
+      !servers.some((server) => server.id === selectedServerId)
+    ) {
       setSelectedServerId(servers[0].id);
     }
   }, [selectedServerId, servers]);
@@ -523,7 +527,9 @@ function App() {
       return;
     }
 
-    const statuses = await invoke<ForwardRuntimeStatus[]>("list_forward_statuses");
+    const statuses = await invoke<ForwardRuntimeStatus[]>(
+      "list_forward_statuses",
+    );
     setStatuses(statuses);
   }
 
@@ -533,7 +539,9 @@ function App() {
       return;
     }
 
-    const cache = await invoke<DockerCache | null>("list_docker_cache", { serverId });
+    const cache = await invoke<DockerCache | null>("list_docker_cache", {
+      serverId,
+    });
     setDockerCache(cache);
   }
 
@@ -945,7 +953,7 @@ function App() {
         }
       >
         <Sidebar collapsible="offcanvas">
-          <SidebarHeader>
+          <SidebarHeader className="pt-10" data-tauri-drag-region>
             <div className="flex items-center gap-3 px-2 py-2">
               <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
                 <ServerIcon />
@@ -988,7 +996,9 @@ function App() {
                                 <Badge
                                   aria-label={serverForwardStatsLabel(stats)}
                                   className="shrink-0 tabular-nums"
-                                  variant={stats.active ? "default" : "secondary"}
+                                  variant={
+                                    stats.active ? "default" : "secondary"
+                                  }
                                 >
                                   {stats.active}/{stats.total}
                                 </Badge>
@@ -1003,11 +1013,18 @@ function App() {
                                     <EllipsisIcon />
                                   </Button>
                                 </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-44">
+                                <DropdownMenuContent
+                                  align="end"
+                                  className="w-44"
+                                >
                                   <DropdownMenuGroup>
-                                    <DropdownMenuLabel>Server</DropdownMenuLabel>
+                                    <DropdownMenuLabel>
+                                      Server
+                                    </DropdownMenuLabel>
                                     <DropdownMenuItem
-                                      disabled={busy === `test-server-${server.id}`}
+                                      disabled={
+                                        busy === `test-server-${server.id}`
+                                      }
                                       onSelect={() => {
                                         void testServer(server);
                                       }}
@@ -1016,7 +1033,9 @@ function App() {
                                       Test connection
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
-                                      onSelect={() => openEditServerDialog(server)}
+                                      onSelect={() =>
+                                        openEditServerDialog(server)
+                                      }
                                     >
                                       <PencilIcon />
                                       Edit
@@ -1080,11 +1099,28 @@ function App() {
         </Sidebar>
 
         <SidebarInset>
-          <main className="flex min-h-svh flex-col gap-4 p-4 md:p-6">
+          <header className="flex h-[4.5rem] shrink-0 items-center gap-3 border-b bg-background/95 px-4 md:px-6">
+            <SidebarTrigger className="shrink-0" />
+            <div className="min-w-0">
+              <div className="truncate text-sm text-muted-foreground">
+                {selectedServer
+                  ? `${selectedServer.username}@${selectedServer.host}:${selectedServer.port}`
+                  : "No server selected"}
+              </div>
+              <div className="truncate font-heading text-lg font-semibold">
+                {selectedServer?.name ?? "Port Forward"}
+              </div>
+            </div>
+            <div
+              aria-hidden="true"
+              className="min-w-8 flex-1 self-stretch"
+              data-tauri-drag-region
+            />
+          </header>
+          <main className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4 md:p-6">
             <Card>
               <CardHeader className="flex flex-row items-start justify-between gap-4">
                 <div className="flex min-w-0 items-start gap-3">
-                  <SidebarTrigger className="mt-1 shrink-0" />
                   <div className="min-w-0">
                     <CardDescription>Secrets</CardDescription>
                     <CardTitle>Credentials</CardTitle>
@@ -1143,7 +1179,9 @@ function App() {
                             <TableCell>
                               <SecretValue
                                 label="URL"
-                                onCopy={() => copySecretValue("URL", secret.url)}
+                                onCopy={() =>
+                                  copySecretValue("URL", secret.url)
+                                }
                                 value={secret.url}
                               />
                             </TableCell>
@@ -1285,7 +1323,9 @@ function App() {
                               <TableCell>
                                 <div className="flex justify-end gap-2">
                                   <Button
-                                    onClick={() => openEditForwardDialog(forward)}
+                                    onClick={() =>
+                                      openEditForwardDialog(forward)
+                                    }
                                     size="sm"
                                     type="button"
                                     variant="outline"
@@ -1420,7 +1460,9 @@ function App() {
                                 {container.image}
                               </TableCell>
                               <TableCell>
-                                <Badge variant="outline">{container.status}</Badge>
+                                <Badge variant="outline">
+                                  {container.status}
+                                </Badge>
                               </TableCell>
                               <TableCell className="text-muted-foreground">
                                 No exposed ports
@@ -1454,7 +1496,9 @@ function App() {
                               {container.image}
                             </TableCell>
                             <TableCell>
-                              <Badge variant="outline">{container.status}</Badge>
+                              <Badge variant="outline">
+                                {container.status}
+                              </Badge>
                             </TableCell>
                             <TableCell>
                               <div className="flex flex-col gap-1">
@@ -1722,10 +1766,16 @@ function ContainerLogsDialog({
 
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={session ? "default" : error ? "destructive" : "secondary"}>
+            <Badge
+              variant={
+                session ? "default" : error ? "destructive" : "secondary"
+              }
+            >
               {status}
             </Badge>
-            {container?.status && <Badge variant="outline">{container.status}</Badge>}
+            {container?.status && (
+              <Badge variant="outline">{container.status}</Badge>
+            )}
             {session?.startedAt && (
               <span className="text-xs text-muted-foreground">
                 Started {formatTime(session.startedAt)}
@@ -1815,7 +1865,11 @@ function ContainerLogsDialog({
         </div>
 
         <DialogFooter>
-          <Button onClick={() => onOpenChange(false)} type="button" variant="outline">
+          <Button
+            onClick={() => onOpenChange(false)}
+            type="button"
+            variant="outline"
+          >
             Close
           </Button>
         </DialogFooter>
@@ -1930,7 +1984,9 @@ function ServerDialog({
                 <Input
                   id="server-port"
                   inputMode="numeric"
-                  onChange={(event) => update("port", event.currentTarget.value)}
+                  onChange={(event) =>
+                    update("port", event.currentTarget.value)
+                  }
                   placeholder="22"
                   value={form.port}
                 />
@@ -2216,7 +2272,9 @@ function ForwardDialog({
                 <Input
                   disabled={disabled}
                   id="forward-dialog-name"
-                  onChange={(event) => update("name", event.currentTarget.value)}
+                  onChange={(event) =>
+                    update("name", event.currentTarget.value)
+                  }
                   placeholder="Database"
                   value={form.name}
                 />
@@ -2484,14 +2542,20 @@ function formatTime(value: string) {
 function statusVariant(state?: RuntimeState) {
   if (state === "failed") return "destructive";
   if (state === "running") return "default";
-  if (state === "starting" || state === "reconnecting" || state === "stopping") {
+  if (
+    state === "starting" ||
+    state === "reconnecting" ||
+    state === "stopping"
+  ) {
     return "secondary";
   }
   return "outline";
 }
 
 function isForwardActive(state?: RuntimeState) {
-  return state === "starting" || state === "running" || state === "reconnecting";
+  return (
+    state === "starting" || state === "running" || state === "reconnecting"
+  );
 }
 
 function serverForwardStatsLabel(stats: { active: number; total: number }) {
@@ -2530,7 +2594,10 @@ function dockerLogRows(entries: DockerLogEntry[]): DockerLogRow[] {
   };
 
   entries.forEach((entry) => {
-    const parts = entry.text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    const parts = entry.text
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .split("\n");
 
     parts.forEach((part, index) => {
       if (index > 0) {
@@ -2553,7 +2620,9 @@ function dockerLogRows(entries: DockerLogEntry[]): DockerLogRow[] {
 }
 
 function isLogViewportAtBottom(viewport: HTMLElement) {
-  return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 32;
+  return (
+    viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 32
+  );
 }
 
 function dockerLogStreamClass(stream: DockerLogStream) {
@@ -2571,7 +2640,11 @@ function renderAnsiText(text: string, keyPrefix: string): ReactNode[] {
 
   csiPattern.lastIndex = 0;
 
-  for (let match = csiPattern.exec(text); match; match = csiPattern.exec(text)) {
+  for (
+    let match = csiPattern.exec(text);
+    match;
+    match = csiPattern.exec(text)
+  ) {
     pushAnsiTextSegment(
       nodes,
       text.slice(lastIndex, match.index),
@@ -2608,7 +2681,10 @@ function pushAnsiTextSegment(
   }
 
   nodes.push(
-    <span key={key} style={Object.keys(style).length ? { ...style } : undefined}>
+    <span
+      key={key}
+      style={Object.keys(style).length ? { ...style } : undefined}
+    >
       {text}
     </span>,
   );
@@ -2723,7 +2799,12 @@ function ansiBasicColor(index: number) {
 }
 
 function ansi256Color(value?: number) {
-  if (value === undefined || !Number.isInteger(value) || value < 0 || value > 255) {
+  if (
+    value === undefined ||
+    !Number.isInteger(value) ||
+    value < 0 ||
+    value > 255
+  ) {
     return null;
   }
 
@@ -2746,7 +2827,9 @@ function ansi256Color(value?: number) {
 }
 
 function isRgbChannel(value: number | undefined) {
-  return value !== undefined && Number.isInteger(value) && value >= 0 && value <= 255;
+  return (
+    value !== undefined && Number.isInteger(value) && value >= 0 && value <= 255
+  );
 }
 
 function nullableText(value: string) {
