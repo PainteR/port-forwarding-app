@@ -18,6 +18,9 @@ use crate::{
     ssh,
 };
 
+const FALLBACK_PORT_START: u16 = 50000;
+const FALLBACK_PORT_END: u16 = 58000;
+
 #[derive(Default)]
 pub struct TunnelManager {
     handles: Mutex<HashMap<String, TunnelHandle>>,
@@ -32,7 +35,7 @@ struct TunnelHandle {
 impl TunnelManager {
     pub fn start(
         &self,
-        forward: ForwardConfig,
+        mut forward: ForwardConfig,
         server: ServerConfig,
     ) -> Result<ForwardRuntimeStatus, String> {
         validate_forward(&forward)?;
@@ -61,15 +64,22 @@ impl TunnelManager {
         }
 
         let local_listener = match forward.kind {
-            ForwardKind::Local | ForwardKind::Dynamic => Some(bind_local_listener(&forward)?),
+            ForwardKind::Local | ForwardKind::Dynamic => Some(bind_local_listener(&mut forward)?),
             ForwardKind::Remote => None,
         };
+
+        let bound_host = matches!(forward.kind, ForwardKind::Local | ForwardKind::Dynamic)
+            .then(|| forward.bind_host.clone());
+        let bound_port = matches!(forward.kind, ForwardKind::Local | ForwardKind::Dynamic)
+            .then_some(forward.bind_port);
 
         let stop = Arc::new(AtomicBool::new(false));
         let status = Arc::new(Mutex::new(ForwardRuntimeStatus {
             forward_id: forward.id.clone(),
             state: RuntimeState::Starting,
             message: None,
+            bound_host,
+            bound_port,
             started_at: Some(Utc::now().to_rfc3339()),
             updated_at: Utc::now().to_rfc3339(),
             reconnects: 0,
@@ -148,6 +158,7 @@ impl TunnelManager {
             Some("Stopped".to_string()),
             None,
         );
+        clear_bound_address(&handle.status);
         read_status(&handle.status)
     }
 
@@ -587,16 +598,40 @@ fn validate_forward(forward: &ForwardConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn bind_local_listener(forward: &ForwardConfig) -> Result<TcpListener, String> {
-    let bind_addr = format!("{}:{}", forward.bind_host, forward.bind_port);
-    ensure_no_reachable_listener(forward)?;
-    TcpListener::bind((forward.bind_host.as_str(), forward.bind_port))
+fn bind_local_listener(forward: &mut ForwardConfig) -> Result<TcpListener, String> {
+    let requested_port = forward.bind_port;
+    match try_bind_local_listener(&forward.bind_host, requested_port) {
+        Ok(listener) => Ok(listener),
+        Err(requested_error) => {
+            for port in FALLBACK_PORT_START..=FALLBACK_PORT_END {
+                if port == requested_port {
+                    continue;
+                }
+
+                if let Ok(listener) = try_bind_local_listener(&forward.bind_host, port) {
+                    forward.bind_port = port;
+                    return Ok(listener);
+                }
+            }
+
+            Err(format!(
+                "Local port {}:{} is unavailable ({requested_error}); no free fallback port found in range {FALLBACK_PORT_START}-{FALLBACK_PORT_END}",
+                forward.bind_host, requested_port
+            ))
+        }
+    }
+}
+
+fn try_bind_local_listener(bind_host: &str, bind_port: u16) -> Result<TcpListener, String> {
+    let bind_addr = format!("{bind_host}:{bind_port}");
+    ensure_no_reachable_listener(bind_host, bind_port)?;
+    TcpListener::bind((bind_host, bind_port))
         .map_err(|error| format!("Local port {bind_addr} is unavailable: {error}"))
 }
 
-fn ensure_no_reachable_listener(forward: &ForwardConfig) -> Result<(), String> {
-    let bind_addr = format!("{}:{}", forward.bind_host, forward.bind_port);
-    for address in probe_addresses(forward)? {
+fn ensure_no_reachable_listener(bind_host: &str, bind_port: u16) -> Result<(), String> {
+    let bind_addr = format!("{bind_host}:{bind_port}");
+    for address in probe_addresses(bind_host, bind_port)? {
         if let Ok(stream) = TcpStream::connect_timeout(&address, Duration::from_millis(150)) {
             let _ = stream.shutdown(Shutdown::Both);
             return Err(format!(
@@ -608,9 +643,8 @@ fn ensure_no_reachable_listener(forward: &ForwardConfig) -> Result<(), String> {
     Ok(())
 }
 
-fn probe_addresses(forward: &ForwardConfig) -> Result<Vec<SocketAddr>, String> {
-    let host = forward.bind_host.trim();
-    let port = forward.bind_port;
+fn probe_addresses(bind_host: &str, bind_port: u16) -> Result<Vec<SocketAddr>, String> {
+    let host = bind_host.trim();
     let candidates = match host {
         "0.0.0.0" => vec!["127.0.0.1"],
         "::" => vec!["::1", "127.0.0.1"],
@@ -619,8 +653,8 @@ fn probe_addresses(forward: &ForwardConfig) -> Result<Vec<SocketAddr>, String> {
 
     let mut addresses = Vec::new();
     for candidate in candidates {
-        let resolved = (candidate, port).to_socket_addrs().map_err(|error| {
-            format!("Failed to resolve bind address {candidate}:{port}: {error}")
+        let resolved = (candidate, bind_port).to_socket_addrs().map_err(|error| {
+            format!("Failed to resolve bind address {candidate}:{bind_port}: {error}")
         })?;
         for address in resolved {
             if !addresses.contains(&address) {
@@ -658,6 +692,13 @@ fn update_status(
     }
 }
 
+fn clear_bound_address(status: &Arc<Mutex<ForwardRuntimeStatus>>) {
+    if let Ok(mut status) = status.lock() {
+        status.bound_host = None;
+        status.bound_port = None;
+    }
+}
+
 fn read_status(status: &Arc<Mutex<ForwardRuntimeStatus>>) -> Result<ForwardRuntimeStatus, String> {
     status
         .lock()
@@ -670,6 +711,8 @@ fn stopped_status(forward_id: &str) -> ForwardRuntimeStatus {
         forward_id: forward_id.to_string(),
         state: RuntimeState::Stopped,
         message: Some("Stopped".to_string()),
+        bound_host: None,
+        bound_port: None,
         started_at: None,
         updated_at: Utc::now().to_rfc3339(),
         reconnects: 0,
@@ -693,46 +736,60 @@ struct SocksRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::{bind_local_listener, TunnelManager};
-    use crate::models::{AuthConfig, ForwardConfig, ForwardKind, ForwardSource, ServerConfig};
+    use super::{bind_local_listener, TunnelManager, FALLBACK_PORT_END, FALLBACK_PORT_START};
+    use crate::models::{
+        AuthConfig, ForwardConfig, ForwardKind, ForwardSource, RuntimeState, ServerConfig,
+    };
     use std::net::TcpListener;
 
     #[test]
-    fn local_forward_reports_busy_bind_port_before_starting() {
+    fn local_forward_uses_fallback_port_when_requested_port_is_busy() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("test port should bind");
         let port = listener
             .local_addr()
             .expect("test listener should have local address")
             .port();
-        let forward = test_forward(ForwardKind::Local, port);
+        let mut forward = test_forward(ForwardKind::Local, port);
 
-        let error =
-            bind_local_listener(&forward).expect_err("occupied local port should be rejected");
+        let fallback_listener =
+            bind_local_listener(&mut forward).expect("occupied local port should use fallback");
 
-        assert!(error.contains("127.0.0.1"));
-        assert!(error.contains(&port.to_string()));
-        assert!(error.contains("unavailable"));
+        assert_ne!(forward.bind_port, port);
+        assert!((FALLBACK_PORT_START..=FALLBACK_PORT_END).contains(&forward.bind_port));
+        assert_eq!(
+            fallback_listener
+                .local_addr()
+                .expect("fallback listener should expose local address")
+                .port(),
+            forward.bind_port
+        );
     }
 
     #[test]
-    fn dynamic_forward_reports_busy_bind_port_before_starting() {
+    fn dynamic_forward_uses_fallback_port_when_requested_port_is_busy() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("test port should bind");
         let port = listener
             .local_addr()
             .expect("test listener should have local address")
             .port();
-        let forward = test_forward(ForwardKind::Dynamic, port);
+        let mut forward = test_forward(ForwardKind::Dynamic, port);
 
-        let error =
-            bind_local_listener(&forward).expect_err("occupied dynamic port should be rejected");
+        let fallback_listener =
+            bind_local_listener(&mut forward).expect("occupied dynamic port should use fallback");
 
-        assert!(error.contains("127.0.0.1"));
-        assert!(error.contains(&port.to_string()));
-        assert!(error.contains("unavailable"));
+        assert_ne!(forward.bind_port, port);
+        assert!((FALLBACK_PORT_START..=FALLBACK_PORT_END).contains(&forward.bind_port));
+        assert_eq!(
+            fallback_listener
+                .local_addr()
+                .expect("fallback listener should expose local address")
+                .port(),
+            forward.bind_port
+        );
     }
 
     #[test]
-    fn start_rejects_busy_local_port_synchronously() {
+    fn start_uses_runtime_fallback_port_without_rewriting_forward_config() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("test port should bind");
         let port = listener
             .local_addr()
@@ -740,21 +797,36 @@ mod tests {
             .port();
         let manager = TunnelManager::default();
         let forward = test_forward(ForwardKind::Local, port);
+        let forward_id = forward.id.clone();
 
-        let error = manager
+        let status = manager
             .start(forward, test_server())
-            .expect_err("occupied local port should be rejected before opening SSH");
+            .expect("occupied local port should start on a fallback port");
 
-        assert!(error.contains("127.0.0.1"));
-        assert!(error.contains(&port.to_string()));
-        assert!(error.contains("unavailable"));
+        assert!(matches!(
+            status.state,
+            RuntimeState::Starting | RuntimeState::Running
+        ));
+        assert_eq!(status.bound_host.as_deref(), Some("127.0.0.1"));
+        let bound_port = status
+            .bound_port
+            .expect("local forward should report runtime bound port");
+        assert_ne!(bound_port, port);
+        assert!((FALLBACK_PORT_START..=FALLBACK_PORT_END).contains(&bound_port));
         assert!(
             manager
                 .statuses()
                 .expect("statuses should be readable")
-                .is_empty(),
-            "failed starts should not leave runtime handles"
+                .iter()
+                .any(|status| status.forward_id == forward_id),
+            "fallback starts should leave a runtime handle"
         );
+
+        let stopped_status = manager
+            .stop(&forward_id)
+            .expect("fallback listener should stop cleanly");
+        assert_eq!(stopped_status.bound_host, None);
+        assert_eq!(stopped_status.bound_port, None);
     }
 
     fn test_forward(kind: ForwardKind, bind_port: u16) -> ForwardConfig {

@@ -1,8 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   BoxesIcon,
   CheckCircle2Icon,
   EllipsisIcon,
+  ExternalLinkIcon,
   PencilIcon,
   PlayIcon,
   PlugIcon,
@@ -142,6 +144,8 @@ type ForwardRuntimeStatus = {
   forwardId: string;
   state: RuntimeState;
   message?: string | null;
+  boundHost?: string | null;
+  boundPort?: number | null;
   startedAt?: string | null;
   updatedAt: string;
   reconnects: number;
@@ -509,15 +513,28 @@ function App() {
   }
 
   async function startForward(id: string) {
+    const configuredForward = forwards.find((forward) => forward.id === id);
     const result = await runAction(`start-${id}`, () =>
       invoke<ForwardRuntimeStatus>("start_forward", { id }),
     );
     if (!result.ok) return;
 
     await loadStatuses();
-    if (result.value.state === "failed") {
+    const status = result.value;
+    if (status.state === "failed") {
       toast.error("Tunnel failed", {
-        description: result.value.message ?? "Tunnel could not be started",
+        description: status.message ?? "Tunnel could not be started",
+      });
+      return;
+    }
+
+    if (
+      configuredForward &&
+      status.boundPort &&
+      status.boundPort !== configuredForward.bindPort
+    ) {
+      toast.success("Tunnel started on a temporary port", {
+        description: `Port ${configuredForward.bindPort} is busy, using ${status.boundPort}`,
       });
       return;
     }
@@ -533,6 +550,24 @@ function App() {
 
     await loadStatuses();
     toast.success("Tunnel stopped");
+  }
+
+  async function openForwardInBrowser(
+    forward: ForwardConfig,
+    status?: ForwardRuntimeStatus,
+  ) {
+    const url = forwardBrowserUrl(forward, status);
+    if (!hasTauriRuntime()) {
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    const result = await runAction(`open-${forward.id}`, () => openUrl(url));
+    if (!result.ok) return;
+
+    toast.success("Browser opened", {
+      description: url,
+    });
   }
 
   async function refreshDocker() {
@@ -788,6 +823,11 @@ function App() {
                         {selectedForwards.map((forward) => {
                           const status = statusByForward.get(forward.id);
                           const active = isForwardActive(status?.state);
+                          const runtimeBind = bindLabel(forward, status);
+                          const usesRuntimePort = isUsingRuntimeBind(
+                            forward,
+                            status,
+                          );
                           return (
                             <TableRow key={forward.id}>
                               <TableCell>
@@ -799,7 +839,15 @@ function App() {
                                 {forward.name}
                               </TableCell>
                               <TableCell>
-                                {forward.bindHost}:{forward.bindPort}
+                                <div className="flex flex-col gap-1">
+                                  <span>{runtimeBind}</span>
+                                  {usesRuntimePort && (
+                                    <span className="text-xs text-muted-foreground">
+                                      Configured {forward.bindHost}:
+                                      {forward.bindPort}
+                                    </span>
+                                  )}
+                                </div>
                               </TableCell>
                               <TableCell>{targetLabel(forward)}</TableCell>
                               <TableCell>
@@ -835,6 +883,20 @@ function App() {
                                     <PlayIcon data-icon="inline-start" />
                                     Start
                                   </Button>
+                                  {forward.kind === "local" && (
+                                    <Button
+                                      disabled={!active}
+                                      onClick={() =>
+                                        openForwardInBrowser(forward, status)
+                                      }
+                                      size="sm"
+                                      type="button"
+                                      variant="outline"
+                                    >
+                                      <ExternalLinkIcon data-icon="inline-start" />
+                                      Open
+                                    </Button>
+                                  )}
                                   <Button
                                     disabled={!active}
                                     onClick={() => stopForward(forward.id)}
@@ -1475,6 +1537,49 @@ function kindLabel(kind: ForwardKind) {
 function targetLabel(forward: ForwardConfig) {
   if (forward.kind === "dynamic") return "SOCKS";
   return `${forward.targetHost ?? ""}:${forward.targetPort ?? ""}`;
+}
+
+function effectiveBindHost(
+  forward: ForwardConfig,
+  status?: ForwardRuntimeStatus,
+) {
+  return status?.boundHost ?? forward.bindHost;
+}
+
+function effectiveBindPort(
+  forward: ForwardConfig,
+  status?: ForwardRuntimeStatus,
+) {
+  return status?.boundPort ?? forward.bindPort;
+}
+
+function bindLabel(forward: ForwardConfig, status?: ForwardRuntimeStatus) {
+  return `${effectiveBindHost(forward, status)}:${effectiveBindPort(forward, status)}`;
+}
+
+function isUsingRuntimeBind(
+  forward: ForwardConfig,
+  status?: ForwardRuntimeStatus,
+) {
+  return (
+    Boolean(status?.boundPort) &&
+    (status?.boundHost !== forward.bindHost ||
+      status?.boundPort !== forward.bindPort)
+  );
+}
+
+function forwardBrowserUrl(
+  forward: ForwardConfig,
+  status?: ForwardRuntimeStatus,
+) {
+  const host = browserHost(effectiveBindHost(forward, status));
+  return `http://${host}:${effectiveBindPort(forward, status)}`;
+}
+
+function browserHost(host: string) {
+  if (host === "0.0.0.0" || host === "::") return "127.0.0.1";
+  if (host.includes(":") && !host.startsWith("[")) return `[${host}]`;
+  return host || "127.0.0.1";
 }
 
 function formatTime(value: string) {

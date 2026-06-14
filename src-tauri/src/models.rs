@@ -96,6 +96,8 @@ pub struct ForwardRuntimeStatus {
     pub forward_id: String,
     pub state: RuntimeState,
     pub message: Option<String>,
+    pub bound_host: Option<String>,
+    pub bound_port: Option<u16>,
     pub started_at: Option<String>,
     pub updated_at: String,
     pub reconnects: u32,
