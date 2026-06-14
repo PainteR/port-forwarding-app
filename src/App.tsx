@@ -26,6 +26,7 @@ import {
   type CSSProperties,
   type FormEvent,
   type RefObject,
+  type ReactNode,
 } from "react";
 import { toast } from "sonner";
 
@@ -262,6 +263,11 @@ type DeleteTarget =
 type ActionResult<T> =
   | { ok: true; value: T }
   | { ok: false };
+
+type AnsiTextStyle = Pick<
+  CSSProperties,
+  "backgroundColor" | "color" | "fontStyle" | "fontWeight" | "opacity" | "textDecoration"
+>;
 
 const emptyServerForm: ServerForm = {
   name: "",
@@ -1674,7 +1680,7 @@ function ContainerLogsDialog({
                   className={dockerLogStreamClass(line.stream)}
                   key={`${line.timestamp}-${index}`}
                 >
-                  {line.text}
+                  {renderAnsiText(line.text, `${line.timestamp}-${index}`)}
                 </span>
               ))
             ) : (
@@ -2393,6 +2399,193 @@ function dockerLogStreamClass(stream: DockerLogStream) {
   if (stream === "system") return "text-destructive";
   if (stream === "stderr") return "text-amber-400";
   return "text-foreground";
+}
+
+function renderAnsiText(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const style: AnsiTextStyle = {};
+  const csiPattern = /\x1b\[([0-?]*)([ -/]*)([@-~])/g;
+  let lastIndex = 0;
+  let segmentIndex = 0;
+
+  csiPattern.lastIndex = 0;
+
+  for (let match = csiPattern.exec(text); match; match = csiPattern.exec(text)) {
+    pushAnsiTextSegment(
+      nodes,
+      text.slice(lastIndex, match.index),
+      style,
+      `${keyPrefix}-${segmentIndex}`,
+    );
+    segmentIndex += 1;
+
+    if (match[3] === "m") {
+      applyAnsiCodes(style, parseAnsiCodes(match[1]));
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  pushAnsiTextSegment(
+    nodes,
+    text.slice(lastIndex),
+    style,
+    `${keyPrefix}-${segmentIndex}`,
+  );
+
+  return nodes;
+}
+
+function pushAnsiTextSegment(
+  nodes: ReactNode[],
+  text: string,
+  style: AnsiTextStyle,
+  key: string,
+) {
+  if (!text) {
+    return;
+  }
+
+  nodes.push(
+    <span key={key} style={Object.keys(style).length ? { ...style } : undefined}>
+      {text}
+    </span>,
+  );
+}
+
+function parseAnsiCodes(params: string) {
+  if (!params) {
+    return [0];
+  }
+
+  return params.split(";").map((param) => Number(param || 0));
+}
+
+function applyAnsiCodes(style: AnsiTextStyle, codes: number[]) {
+  for (let index = 0; index < codes.length; index += 1) {
+    const code = codes[index] ?? 0;
+
+    if (code === 0) {
+      clearAnsiStyle(style);
+    } else if (code === 1) {
+      style.fontWeight = 700;
+    } else if (code === 2) {
+      style.opacity = 0.72;
+    } else if (code === 3) {
+      style.fontStyle = "italic";
+    } else if (code === 4) {
+      style.textDecoration = "underline";
+    } else if (code === 22) {
+      delete style.fontWeight;
+      delete style.opacity;
+    } else if (code === 23) {
+      delete style.fontStyle;
+    } else if (code === 24) {
+      delete style.textDecoration;
+    } else if (code === 39) {
+      delete style.color;
+    } else if (code === 49) {
+      delete style.backgroundColor;
+    } else if (code >= 30 && code <= 37) {
+      style.color = ansiBasicColor(code - 30);
+    } else if (code >= 90 && code <= 97) {
+      style.color = ansiBasicColor(code - 90 + 8);
+    } else if (code >= 40 && code <= 47) {
+      style.backgroundColor = ansiBasicColor(code - 40);
+    } else if (code >= 100 && code <= 107) {
+      style.backgroundColor = ansiBasicColor(code - 100 + 8);
+    } else if (code === 38 || code === 48) {
+      const result = readExtendedAnsiColor(codes, index + 1);
+      if (result) {
+        if (code === 38) {
+          style.color = result.color;
+        } else {
+          style.backgroundColor = result.color;
+        }
+        index = result.nextIndex;
+      }
+    }
+  }
+}
+
+function clearAnsiStyle(style: AnsiTextStyle) {
+  delete style.backgroundColor;
+  delete style.color;
+  delete style.fontStyle;
+  delete style.fontWeight;
+  delete style.opacity;
+  delete style.textDecoration;
+}
+
+function readExtendedAnsiColor(codes: number[], index: number) {
+  const mode = codes[index];
+
+  if (mode === 5) {
+    const color = ansi256Color(codes[index + 1]);
+    return color ? { color, nextIndex: index + 1 } : null;
+  }
+
+  if (mode === 2) {
+    const [red, green, blue] = codes.slice(index + 1, index + 4);
+    if ([red, green, blue].every(isRgbChannel)) {
+      return {
+        color: `rgb(${red}, ${green}, ${blue})`,
+        nextIndex: index + 3,
+      };
+    }
+  }
+
+  return null;
+}
+
+function ansiBasicColor(index: number) {
+  const colors = [
+    "#0f172a",
+    "#ef4444",
+    "#22c55e",
+    "#eab308",
+    "#3b82f6",
+    "#d946ef",
+    "#06b6d4",
+    "#e5e7eb",
+    "#64748b",
+    "#f87171",
+    "#4ade80",
+    "#facc15",
+    "#60a5fa",
+    "#e879f9",
+    "#22d3ee",
+    "#f8fafc",
+  ];
+
+  return colors[index] ?? colors[7];
+}
+
+function ansi256Color(value?: number) {
+  if (value === undefined || !Number.isInteger(value) || value < 0 || value > 255) {
+    return null;
+  }
+
+  if (value < 16) {
+    return ansiBasicColor(value);
+  }
+
+  if (value >= 232) {
+    const level = 8 + (value - 232) * 10;
+    return `rgb(${level}, ${level}, ${level})`;
+  }
+
+  const levels = [0, 95, 135, 175, 215, 255];
+  const offset = value - 16;
+  const red = levels[Math.floor(offset / 36)];
+  const green = levels[Math.floor(offset / 6) % 6];
+  const blue = levels[offset % 6];
+
+  return `rgb(${red}, ${green}, ${blue})`;
+}
+
+function isRgbChannel(value: number | undefined) {
+  return value !== undefined && Number.isInteger(value) && value >= 0 && value <= 255;
 }
 
 function nullableText(value: string) {
