@@ -1,7 +1,8 @@
 {
-  "name": "port-forwarding-app",
+  "name": "port-forward",
   "private": true,
   "version": "0.1.0",
+  "description": "Native SSH tunnel manager for local, remote, dynamic, and Docker port forwards.",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -2813,7 +2813,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "port-forwarding-app"
+name = "port-forward"
 version = "0.1.0"
 dependencies = [
  "chrono",

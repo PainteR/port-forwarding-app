@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "port-forwarding-app",
+  "productName": "Port Forward",
   "version": "0.1.0",
   "identifier": "com.painter.port-forwarding-app",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "port-forwarding-app",
+        "title": "Port Forward",
         "width": 1600,
         "height": 1020,
         "minWidth": 980,
@@ -26,7 +26,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["app", "dmg"],
+    "category": "DeveloperTool",
+    "shortDescription": "Native SSH tunnel manager.",
+    "longDescription": "Port Forward manages local, remote, dynamic, and Docker-backed SSH port forwards from a desktop UI.",
+    "copyright": "Copyright 2026 painter",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
