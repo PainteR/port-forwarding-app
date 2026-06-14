@@ -25,6 +25,16 @@ import {
 } from "react";
 import { toast } from "sonner";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -214,6 +224,11 @@ type SecretForm = {
   notes: string;
 };
 
+type DeleteTarget =
+  | { kind: "server"; id: string; name: string }
+  | { kind: "forward"; id: string; name: string }
+  | { kind: "secret"; id: string; name: string };
+
 type ActionResult<T> =
   | { ok: true; value: T }
   | { ok: false };
@@ -260,6 +275,7 @@ function App() {
   const [editingForwardId, setEditingForwardId] = useState<string | null>(null);
   const [secretDialogOpen, setSecretDialogOpen] = useState(false);
   const [editingSecretId, setEditingSecretId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<DeleteTarget | null>(null);
   const [serverForm, setServerForm] = useState<ServerForm>(emptyServerForm);
   const [forwardForm, setForwardForm] = useState<ForwardForm>(emptyForwardForm);
   const [secretForm, setSecretForm] = useState<SecretForm>(emptySecretForm);
@@ -623,6 +639,22 @@ function App() {
     toast.success("Forward deleted");
   }
 
+  async function confirmPendingDelete() {
+    const target = pendingDelete;
+    if (!target) return;
+
+    setPendingDelete(null);
+    if (target.kind === "server") {
+      await deleteServer(target.id);
+      return;
+    }
+    if (target.kind === "secret") {
+      await deleteSecret(target.id);
+      return;
+    }
+    await deleteForward(target.id);
+  }
+
   async function startForward(id: string) {
     const configuredForward = forwards.find((forward) => forward.id === id);
     const result = await runAction(`start-${id}`, () =>
@@ -829,7 +861,11 @@ function App() {
                                   <DropdownMenuGroup>
                                     <DropdownMenuItem
                                       onSelect={() => {
-                                        void deleteServer(server.id);
+                                        setPendingDelete({
+                                          kind: "server",
+                                          id: server.id,
+                                          name: server.name,
+                                        });
                                       }}
                                       variant="destructive"
                                     >
@@ -961,7 +997,13 @@ function App() {
                                   Edit
                                 </Button>
                                 <Button
-                                  onClick={() => deleteSecret(secret.id)}
+                                  onClick={() =>
+                                    setPendingDelete({
+                                      kind: "secret",
+                                      id: secret.id,
+                                      name: secret.name,
+                                    })
+                                  }
                                   size="sm"
                                   type="button"
                                   variant="destructive"
@@ -1121,7 +1163,13 @@ function App() {
                                     Stop
                                   </Button>
                                   <Button
-                                    onClick={() => deleteForward(forward.id)}
+                                    onClick={() =>
+                                      setPendingDelete({
+                                        kind: "forward",
+                                        id: forward.id,
+                                        name: forward.name,
+                                      })
+                                    }
                                     size="sm"
                                     type="button"
                                     variant="destructive"
@@ -1337,9 +1385,47 @@ function App() {
           onSubmit={saveSecret}
           open={secretDialogOpen}
         />
+        <ConfirmDeleteDialog
+          onConfirm={() => {
+            void confirmPendingDelete();
+          }}
+          onOpenChange={(open) => {
+            if (!open) setPendingDelete(null);
+          }}
+          target={pendingDelete}
+        />
         <Toaster closeButton position="bottom-right" richColors theme="dark" />
       </SidebarProvider>
     </TooltipProvider>
+  );
+}
+
+function ConfirmDeleteDialog({
+  onConfirm,
+  onOpenChange,
+  target,
+}: {
+  onConfirm: () => void;
+  onOpenChange: (open: boolean) => void;
+  target: DeleteTarget | null;
+}) {
+  return (
+    <AlertDialog onOpenChange={onOpenChange} open={Boolean(target)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{deleteDialogTitle(target)}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {deleteDialogDescription(target)}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm} variant="destructive">
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -1918,6 +2004,24 @@ function secretToForm(secret: SecretConfig): SecretForm {
     url: secret.url ?? "",
     notes: secret.notes ?? "",
   };
+}
+
+function deleteDialogTitle(target: DeleteTarget | null) {
+  if (!target) return "Delete item?";
+  if (target.kind === "server") return `Delete server "${target.name}"?`;
+  if (target.kind === "secret") return `Delete secret "${target.name}"?`;
+  return `Delete forward "${target.name}"?`;
+}
+
+function deleteDialogDescription(target: DeleteTarget | null) {
+  if (!target) return "This action cannot be undone.";
+  if (target.kind === "server") {
+    return "This will remove the server, its forwards, Docker cache, and saved secrets. Running tunnels for this server will be stopped.";
+  }
+  if (target.kind === "secret") {
+    return "This will remove the saved credential from local storage. This action cannot be undone.";
+  }
+  return "This will stop the tunnel if it is running and remove the forward from local storage. This action cannot be undone.";
 }
 
 function kindLabel(kind: ForwardKind) {
