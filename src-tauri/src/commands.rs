@@ -1,9 +1,11 @@
-use tauri::State;
+use tauri::{AppHandle, State};
 use uuid::Uuid;
 
 use crate::{
+    docker_logs,
     models::{
-        DockerCache, ForwardConfig, ForwardRuntimeStatus, ForwardSource, SecretConfig, ServerConfig,
+        DockerCache, DockerLogSession, ForwardConfig, ForwardRuntimeStatus, ForwardSource,
+        SecretConfig, ServerConfig,
     },
     ssh,
     storage::AppState,
@@ -49,6 +51,7 @@ pub fn delete_server(state: State<AppState>, id: String) -> Result<(), String> {
     for forward_id in forward_ids {
         let _ = state.tunnels.stop(&forward_id);
     }
+    let _ = state.docker_logs.stop_sessions_for_server(&id);
 
     state.update(|store| {
         store.servers.retain(|server| server.id != id);
@@ -225,6 +228,36 @@ pub fn list_docker_cache(
     })
 }
 
+#[tauri::command]
+pub fn start_container_logs(
+    state: State<AppState>,
+    app: AppHandle,
+    server_id: String,
+    container_id: String,
+    container_name: String,
+) -> Result<DockerLogSession, String> {
+    let server = find_server(&state, &server_id)?;
+    let command = docker_logs::docker_logs_command(&container_id, 1000, false)?;
+    let output = ssh::exec(&server, &command)?;
+
+    if output.exit_status != 0 {
+        return Err(command_error(
+            "Failed to read Docker logs",
+            &output.stdout,
+            &output.stderr,
+        ));
+    }
+
+    state
+        .docker_logs
+        .start(app, server, container_id, container_name, output.stdout)
+}
+
+#[tauri::command]
+pub fn stop_container_logs(state: State<AppState>, session_id: String) -> Result<(), String> {
+    state.docker_logs.stop(&session_id)
+}
+
 fn find_server(state: &State<AppState>, server_id: &str) -> Result<ServerConfig, String> {
     state
         .read(|store| {
@@ -249,6 +282,17 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn command_error(prefix: &str, stdout: &str, stderr: &str) -> String {
+    let message = [stderr.trim(), stdout.trim()]
+        .into_iter()
+        .find(|message| !message.is_empty());
+
+    match message {
+        Some(message) => format!("{prefix}: {message}"),
+        None => prefix.to_string(),
+    }
 }
 
 fn default_forward_name(forward: &ForwardConfig) -> String {

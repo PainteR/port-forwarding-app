@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   BoxesIcon,
@@ -12,6 +13,7 @@ import {
   PlugIcon,
   PlusIcon,
   RefreshCwIcon,
+  ScrollTextIcon,
   ServerIcon,
   SquareIcon,
   Trash2Icon,
@@ -19,9 +21,11 @@ import {
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type FormEvent,
+  type RefObject,
 } from "react";
 import { toast } from "sonner";
 
@@ -195,6 +199,32 @@ type DockerCache = {
   lastError?: string | null;
 };
 
+type DockerLogStream = "stdout" | "stderr" | "system";
+
+type DockerLogSession = {
+  sessionId: string;
+  serverId: string;
+  containerId: string;
+  containerName: string;
+  initialLogs: string;
+  startedAt: string;
+};
+
+type DockerLogChunk = {
+  sessionId: string;
+  stream: DockerLogStream;
+  text: string;
+  timestamp: string;
+};
+
+type DockerLogStopped = {
+  sessionId: string;
+  message?: string | null;
+  timestamp: string;
+};
+
+type DockerLogEntry = DockerLogChunk;
+
 type ServerForm = {
   name: string;
   host: string;
@@ -280,6 +310,13 @@ function App() {
   const [forwardForm, setForwardForm] = useState<ForwardForm>(emptyForwardForm);
   const [secretForm, setSecretForm] = useState<SecretForm>(emptySecretForm);
   const [busy, setBusy] = useState<string | null>(null);
+  const [logDialogOpen, setLogDialogOpen] = useState(false);
+  const [logContainer, setLogContainer] = useState<DockerContainer | null>(null);
+  const [logSession, setLogSession] = useState<DockerLogSession | null>(null);
+  const [logLines, setLogLines] = useState<DockerLogEntry[]>([]);
+  const [logError, setLogError] = useState<string | null>(null);
+  const activeLogSessionIdRef = useRef<string | null>(null);
+  const logEndRef = useRef<HTMLSpanElement | null>(null);
 
   const selectedServer = useMemo(
     () => servers.find((server) => server.id === selectedServerId) ?? null,
@@ -364,6 +401,72 @@ function App() {
 
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!hasTauriRuntime()) {
+      return;
+    }
+
+    let disposed = false;
+    const unlistenFns: UnlistenFn[] = [];
+
+    void listen<DockerLogChunk>("docker-log-chunk", (event) => {
+      if (event.payload.sessionId !== activeLogSessionIdRef.current) {
+        return;
+      }
+
+      setLogLines((current) => [...current, event.payload].slice(-5000));
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistenFns.push(unlisten);
+      }
+    });
+
+    void listen<DockerLogStopped>("docker-log-stopped", (event) => {
+      if (event.payload.sessionId !== activeLogSessionIdRef.current) {
+        return;
+      }
+
+      const sessionId = event.payload.sessionId;
+      activeLogSessionIdRef.current = null;
+      setLogSession(null);
+      void invoke("stop_container_logs", { sessionId });
+
+      if (event.payload.message) {
+        setLogError(event.payload.message);
+        toast.error("Docker logs stopped", {
+          description: event.payload.message,
+        });
+      }
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistenFns.push(unlisten);
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unlistenFns.forEach((unlisten) => unlisten());
+
+      const sessionId = activeLogSessionIdRef.current;
+      if (sessionId) {
+        activeLogSessionIdRef.current = null;
+        void invoke("stop_container_logs", { sessionId });
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!logDialogOpen) {
+      return;
+    }
+
+    logEndRef.current?.scrollIntoView({ block: "end" });
+  }, [logDialogOpen, logLines]);
 
   async function runAction<T>(
     label: string,
@@ -733,6 +836,62 @@ function App() {
       toast.success("Docker refreshed", {
         description: `${cache.containers.length} containers cached`,
       });
+    }
+  }
+
+  async function openContainerLogs(container: DockerContainer) {
+    if (!selectedServerId) return;
+
+    await stopCurrentContainerLogs();
+    setLogContainer(container);
+    setLogLines([]);
+    setLogError(null);
+    setLogSession(null);
+    setLogDialogOpen(true);
+
+    const result = await runAction(`logs-${container.id}`, () =>
+      invoke<DockerLogSession>("start_container_logs", {
+        serverId: selectedServerId,
+        containerId: container.id,
+        containerName: container.name,
+      }),
+    );
+
+    if (!result.ok) {
+      setLogDialogOpen(false);
+      setLogContainer(null);
+      return;
+    }
+
+    const session = result.value;
+    activeLogSessionIdRef.current = session.sessionId;
+    setLogSession(session);
+    setLogLines(logTextToEntries(session));
+  }
+
+  async function stopCurrentContainerLogs() {
+    const sessionId = activeLogSessionIdRef.current ?? logSession?.sessionId;
+
+    activeLogSessionIdRef.current = null;
+    setLogSession(null);
+
+    if (!sessionId || !hasTauriRuntime()) {
+      return;
+    }
+
+    try {
+      await invoke("stop_container_logs", { sessionId });
+    } catch (caught) {
+      toast.error("Command failed", {
+        description: errorMessage(caught),
+      });
+    }
+  }
+
+  function setContainerLogsOpen(open: boolean) {
+    setLogDialogOpen(open);
+    if (!open) {
+      void stopCurrentContainerLogs();
     }
   }
 
@@ -1260,7 +1419,20 @@ function App() {
                               <TableCell className="text-muted-foreground">
                                 No exposed ports
                               </TableCell>
-                              <TableCell />
+                              <TableCell>
+                                <div className="flex justify-end">
+                                  <Button
+                                    disabled={busy === `logs-${container.id}`}
+                                    onClick={() => openContainerLogs(container)}
+                                    size="sm"
+                                    type="button"
+                                    variant="outline"
+                                  >
+                                    <ScrollTextIcon data-icon="inline-start" />
+                                    Logs
+                                  </Button>
+                                </div>
+                              </TableCell>
                             </TableRow>
                           );
                         }
@@ -1292,7 +1464,17 @@ function App() {
                               </div>
                             </TableCell>
                             <TableCell>
-                              <div className="flex justify-end">
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  disabled={busy === `logs-${container.id}`}
+                                  onClick={() => openContainerLogs(container)}
+                                  size="sm"
+                                  type="button"
+                                  variant="outline"
+                                >
+                                  <ScrollTextIcon data-icon="inline-start" />
+                                  Logs
+                                </Button>
                                 <Button
                                   disabled={!port.publicPort}
                                   onClick={() => quickForward(container, port)}
@@ -1394,6 +1576,15 @@ function App() {
           }}
           target={pendingDelete}
         />
+        <ContainerLogsDialog
+          container={logContainer}
+          endRef={logEndRef}
+          error={logError}
+          lines={logLines}
+          onOpenChange={setContainerLogsOpen}
+          open={logDialogOpen}
+          session={logSession}
+        />
         <Toaster closeButton position="bottom-right" richColors theme="dark" />
       </SidebarProvider>
     </TooltipProvider>
@@ -1426,6 +1617,85 @@ function ConfirmDeleteDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+function ContainerLogsDialog({
+  container,
+  endRef,
+  error,
+  lines,
+  onOpenChange,
+  open,
+  session,
+}: {
+  container: DockerContainer | null;
+  endRef: RefObject<HTMLSpanElement | null>;
+  error: string | null;
+  lines: DockerLogEntry[];
+  onOpenChange: (open: boolean) => void;
+  open: boolean;
+  session: DockerLogSession | null;
+}) {
+  const status = session ? "Live" : error ? "Stopped" : "Loading";
+
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="max-h-[calc(100vh-2rem)] overflow-hidden sm:max-w-5xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ScrollTextIcon className="size-4" />
+            Logs: {container?.name ?? "Container"}
+          </DialogTitle>
+          <DialogDescription>
+            {container
+              ? `${container.image} · ${container.id}`
+              : "Docker container logs"}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={session ? "default" : error ? "destructive" : "secondary"}>
+            {status}
+          </Badge>
+          {container?.status && <Badge variant="outline">{container.status}</Badge>}
+          {session?.startedAt && (
+            <span className="text-xs text-muted-foreground">
+              Started {formatTime(session.startedAt)}
+            </span>
+          )}
+        </div>
+
+        <ScrollArea className="min-w-0 max-w-full overflow-hidden rounded-lg border bg-muted/30 h-[min(65vh,32rem)]">
+          <pre className="min-h-full min-w-0 max-w-full overflow-hidden p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all [overflow-wrap:anywhere]">
+            {lines.length ? (
+              lines.map((line, index) => (
+                <span
+                  className={dockerLogStreamClass(line.stream)}
+                  key={`${line.timestamp}-${index}`}
+                >
+                  {line.text}
+                </span>
+              ))
+            ) : (
+              <span className="text-muted-foreground">
+                {session ? "Waiting for logs..." : "Loading logs..."}
+              </span>
+            )}
+            {error && (
+              <span className="block pt-2 text-destructive">{error}</span>
+            )}
+            <span ref={endRef} />
+          </pre>
+        </ScrollArea>
+
+        <DialogFooter>
+          <Button onClick={() => onOpenChange(false)} type="button" variant="outline">
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2102,6 +2372,27 @@ function isForwardActive(state?: RuntimeState) {
 function serverForwardStatsLabel(stats: { active: number; total: number }) {
   const forwardLabel = stats.total === 1 ? "forward" : "forwards";
   return `${stats.active} active of ${stats.total} ${forwardLabel}`;
+}
+
+function logTextToEntries(session: DockerLogSession): DockerLogEntry[] {
+  if (!session.initialLogs) {
+    return [];
+  }
+
+  return [
+    {
+      sessionId: session.sessionId,
+      stream: "stdout",
+      text: session.initialLogs,
+      timestamp: session.startedAt,
+    },
+  ];
+}
+
+function dockerLogStreamClass(stream: DockerLogStream) {
+  if (stream === "system") return "text-destructive";
+  if (stream === "stderr") return "text-amber-400";
+  return "text-foreground";
 }
 
 function nullableText(value: string) {

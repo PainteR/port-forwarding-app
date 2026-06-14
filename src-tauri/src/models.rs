@@ -104,6 +104,42 @@ pub struct DockerCache {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DockerLogSession {
+    pub session_id: String,
+    pub server_id: String,
+    pub container_id: String,
+    pub container_name: String,
+    pub initial_logs: String,
+    pub started_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DockerLogChunk {
+    pub session_id: String,
+    pub stream: DockerLogStream,
+    pub text: String,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DockerLogStream {
+    Stdout,
+    Stderr,
+    System,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DockerLogStopped {
+    pub session_id: String,
+    pub message: Option<String>,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ForwardRuntimeStatus {
     pub forward_id: String,
     pub state: RuntimeState,

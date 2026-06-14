@@ -6,12 +6,13 @@ use std::{
 
 use tauri::{AppHandle, Manager};
 
-use crate::{models::PersistedState, tunnel::TunnelManager};
+use crate::{docker_logs::DockerLogManager, models::PersistedState, tunnel::TunnelManager};
 
 pub struct AppState {
     store: Mutex<PersistedState>,
     storage_path: PathBuf,
     pub tunnels: TunnelManager,
+    pub docker_logs: DockerLogManager,
 }
 
 impl AppState {
@@ -31,6 +32,7 @@ impl AppState {
             store: Mutex::new(store),
             storage_path,
             tunnels: TunnelManager::default(),
+            docker_logs: DockerLogManager::default(),
         })
     }
 

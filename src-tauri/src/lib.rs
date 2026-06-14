@@ -1,4 +1,5 @@
 mod commands;
+mod docker_logs;
 mod models;
 mod ssh;
 mod storage;
@@ -35,7 +36,9 @@ pub fn run() {
             commands::save_forward,
             commands::save_secret,
             commands::save_server,
+            commands::start_container_logs,
             commands::start_forward,
+            commands::stop_container_logs,
             commands::stop_forward,
             commands::test_connection,
         ])
