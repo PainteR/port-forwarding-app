@@ -2,7 +2,9 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::{
-    models::{DockerCache, ForwardConfig, ForwardRuntimeStatus, ForwardSource, ServerConfig},
+    models::{
+        DockerCache, ForwardConfig, ForwardRuntimeStatus, ForwardSource, SecretConfig, ServerConfig,
+    },
     ssh,
     storage::AppState,
 };
@@ -52,6 +54,7 @@ pub fn delete_server(state: State<AppState>, id: String) -> Result<(), String> {
         store.servers.retain(|server| server.id != id);
         store.forwards.retain(|forward| forward.server_id != id);
         store.docker_caches.retain(|cache| cache.server_id != id);
+        store.secrets.retain(|secret| secret.server_id != id);
     })
 }
 
@@ -75,6 +78,54 @@ pub fn list_forwards(
             .cloned()
             .collect(),
         None => store.forwards.clone(),
+    })
+}
+
+#[tauri::command]
+pub fn list_secrets(
+    state: State<AppState>,
+    server_id: Option<String>,
+) -> Result<Vec<SecretConfig>, String> {
+    state.read(|store| match server_id {
+        Some(server_id) => store
+            .secrets
+            .iter()
+            .filter(|secret| secret.server_id == server_id)
+            .cloned()
+            .collect(),
+        None => store.secrets.clone(),
+    })
+}
+
+#[tauri::command]
+pub fn save_secret(
+    state: State<AppState>,
+    mut secret: SecretConfig,
+) -> Result<SecretConfig, String> {
+    if secret.id.trim().is_empty() {
+        secret.id = Uuid::new_v4().to_string();
+    }
+    if secret.name.trim().is_empty() {
+        secret.name = "Secret".to_string();
+    }
+
+    secret.username = normalize_optional(secret.username);
+    secret.password = normalize_optional(secret.password);
+    secret.url = normalize_optional(secret.url);
+    secret.notes = normalize_optional(secret.notes);
+
+    find_server(&state, &secret.server_id)?;
+
+    state.update(|store| {
+        upsert(&mut store.secrets, secret.clone(), |item| &item.id);
+        secret
+    })
+}
+
+#[tauri::command]
+pub fn delete_secret(state: State<AppState>, id: String) -> Result<(), String> {
+    state.update(|store| {
+        store.secrets.retain(|secret| secret.id != id);
     })
 }
 
@@ -192,6 +243,12 @@ fn upsert<T>(items: &mut Vec<T>, item: T, id: impl Fn(&T) -> &String) {
     } else {
         items.push(item);
     }
+}
+
+fn normalize_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn default_forward_name(forward: &ForwardConfig) -> String {

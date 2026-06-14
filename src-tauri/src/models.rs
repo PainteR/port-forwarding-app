@@ -28,6 +28,18 @@ pub enum AuthConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SecretConfig {
+    pub id: String,
+    pub server_id: String,
+    pub name: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub url: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ForwardConfig {
     pub id: String,
     pub server_id: String,
@@ -117,14 +129,19 @@ pub enum RuntimeState {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PersistedState {
+    #[serde(default)]
     pub servers: Vec<ServerConfig>,
+    #[serde(default)]
     pub forwards: Vec<ForwardConfig>,
+    #[serde(default)]
     pub docker_caches: Vec<DockerCache>,
+    #[serde(default)]
+    pub secrets: Vec<SecretConfig>,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthConfig, ForwardSource};
+    use super::{AuthConfig, ForwardSource, PersistedState};
     use serde_json::json;
 
     #[test]
@@ -207,5 +224,17 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn persisted_state_accepts_missing_secrets() {
+        let state: PersistedState = serde_json::from_value(json!({
+            "servers": [],
+            "forwards": [],
+            "dockerCaches": []
+        }))
+        .expect("older state files without secrets should deserialize");
+
+        assert!(state.secrets.is_empty());
     }
 }

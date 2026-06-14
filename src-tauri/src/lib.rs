@@ -24,13 +24,16 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::delete_forward,
+            commands::delete_secret,
             commands::delete_server,
             commands::list_docker_cache,
             commands::list_forward_statuses,
             commands::list_forwards,
+            commands::list_secrets,
             commands::list_servers,
             commands::refresh_docker_containers,
             commands::save_forward,
+            commands::save_secret,
             commands::save_server,
             commands::start_forward,
             commands::stop_forward,

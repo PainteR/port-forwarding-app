@@ -3,8 +3,10 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   BoxesIcon,
   CheckCircle2Icon,
+  CopyIcon,
   EllipsisIcon,
   ExternalLinkIcon,
+  KeyRoundIcon,
   PencilIcon,
   PlayIcon,
   PlugIcon,
@@ -114,6 +116,16 @@ type ServerConfig = {
   connectTimeoutMs?: number | null;
 };
 
+type SecretConfig = {
+  id: string;
+  serverId: string;
+  name: string;
+  username?: string | null;
+  password?: string | null;
+  url?: string | null;
+  notes?: string | null;
+};
+
 type ForwardKind = "local" | "remote" | "dynamic";
 
 type ForwardConfig = {
@@ -194,6 +206,14 @@ type ForwardForm = {
   autoStart: boolean;
 };
 
+type SecretForm = {
+  name: string;
+  username: string;
+  password: string;
+  url: string;
+  notes: string;
+};
+
 type ActionResult<T> =
   | { ok: true; value: T }
   | { ok: false };
@@ -219,8 +239,17 @@ const emptyForwardForm: ForwardForm = {
   autoStart: false,
 };
 
+const emptySecretForm: SecretForm = {
+  name: "",
+  username: "",
+  password: "",
+  url: "",
+  notes: "",
+};
+
 function App() {
   const [servers, setServers] = useState<ServerConfig[]>([]);
+  const [secrets, setSecrets] = useState<SecretConfig[]>([]);
   const [forwards, setForwards] = useState<ForwardConfig[]>([]);
   const [statuses, setStatuses] = useState<ForwardRuntimeStatus[]>([]);
   const [dockerCache, setDockerCache] = useState<DockerCache | null>(null);
@@ -229,8 +258,11 @@ function App() {
   const [editingServerId, setEditingServerId] = useState<string | null>(null);
   const [forwardDialogOpen, setForwardDialogOpen] = useState(false);
   const [editingForwardId, setEditingForwardId] = useState<string | null>(null);
+  const [secretDialogOpen, setSecretDialogOpen] = useState(false);
+  const [editingSecretId, setEditingSecretId] = useState<string | null>(null);
   const [serverForm, setServerForm] = useState<ServerForm>(emptyServerForm);
   const [forwardForm, setForwardForm] = useState<ForwardForm>(emptyForwardForm);
+  const [secretForm, setSecretForm] = useState<SecretForm>(emptySecretForm);
   const [busy, setBusy] = useState<string | null>(null);
 
   const selectedServer = useMemo(
@@ -244,6 +276,14 @@ function App() {
         ? forwards.filter((forward) => forward.serverId === selectedServerId)
         : [],
     [forwards, selectedServerId],
+  );
+
+  const selectedSecrets = useMemo(
+    () =>
+      selectedServerId
+        ? secrets.filter((secret) => secret.serverId === selectedServerId)
+        : [],
+    [secrets, selectedServerId],
   );
 
   const statusByForward = useMemo(() => {
@@ -334,18 +374,21 @@ function App() {
   async function reload() {
     if (!hasTauriRuntime()) {
       setServers([]);
+      setSecrets([]);
       setForwards([]);
       setStatuses([]);
       return;
     }
 
-    const [servers, forwards, statuses] = await Promise.all([
+    const [servers, secrets, forwards, statuses] = await Promise.all([
       invoke<ServerConfig[]>("list_servers"),
+      invoke<SecretConfig[]>("list_secrets", { serverId: null }),
       invoke<ForwardConfig[]>("list_forwards", { serverId: null }),
       invoke<ForwardRuntimeStatus[]>("list_forward_statuses"),
     ]);
 
     setServers(servers);
+    setSecrets(secrets);
     setForwards(forwards);
     setStatuses(statuses);
   }
@@ -387,10 +430,22 @@ function App() {
     setForwardDialogOpen(true);
   }
 
+  function openCreateSecretDialog() {
+    setEditingSecretId(null);
+    setSecretForm(emptySecretForm);
+    setSecretDialogOpen(true);
+  }
+
   function openEditForwardDialog(forward: ForwardConfig) {
     setEditingForwardId(forward.id);
     setForwardForm(forwardToForm(forward));
     setForwardDialogOpen(true);
+  }
+
+  function openEditSecretDialog(secret: SecretConfig) {
+    setEditingSecretId(secret.id);
+    setSecretForm(secretToForm(secret));
+    setSecretDialogOpen(true);
   }
 
   async function saveServer(event: FormEvent) {
@@ -436,17 +491,73 @@ function App() {
     toast.success("Server deleted");
   }
 
-  async function testSelectedServer() {
-    if (!selectedServer) return;
+  async function testServer(server: ServerConfig) {
+    if (!server) return;
 
-    const result = await runAction("test-server", () =>
-      invoke("test_connection", { serverId: selectedServer.id }),
+    const result = await runAction(`test-server-${server.id}`, () =>
+      invoke("test_connection", { serverId: server.id }),
     );
     if (!result.ok) return;
 
     toast.success("Connected", {
-      description: selectedServer.name,
+      description: server.name,
     });
+  }
+
+  async function saveSecret(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedServerId) return;
+
+    const existingSecret = editingSecretId
+      ? secrets.find((secret) => secret.id === editingSecretId)
+      : null;
+
+    const secret: SecretConfig = {
+      id: editingSecretId ?? "",
+      serverId: existingSecret?.serverId ?? selectedServerId,
+      name: secretForm.name.trim(),
+      username: nullableText(secretForm.username),
+      password: nullableText(secretForm.password),
+      url: nullableText(secretForm.url),
+      notes: nullableText(secretForm.notes),
+    };
+
+    const result = await runAction("save-secret", () =>
+      invoke<SecretConfig>("save_secret", { secret }),
+    );
+    if (!result.ok) return;
+    const saved = result.value;
+
+    setSecretForm(emptySecretForm);
+    setEditingSecretId(null);
+    setSecretDialogOpen(false);
+    await reload();
+    toast.success("Secret saved", {
+      description: saved.name,
+    });
+  }
+
+  async function deleteSecret(id: string) {
+    const result = await runAction(`delete-secret-${id}`, () =>
+      invoke("delete_secret", { id }),
+    );
+    if (!result.ok) return;
+
+    await reload();
+    toast.success("Secret deleted");
+  }
+
+  async function copySecretValue(label: string, value?: string | null) {
+    if (!value) return;
+
+    try {
+      await copyText(value);
+      toast.success(`${label} copied`);
+    } catch (caught) {
+      toast.error("Copy failed", {
+        description: errorMessage(caught),
+      });
+    }
   }
 
   async function saveForward(event: FormEvent) {
@@ -699,6 +810,15 @@ function App() {
                                   <DropdownMenuGroup>
                                     <DropdownMenuLabel>Server</DropdownMenuLabel>
                                     <DropdownMenuItem
+                                      disabled={busy === `test-server-${server.id}`}
+                                      onSelect={() => {
+                                        void testServer(server);
+                                      }}
+                                    >
+                                      <CheckCircle2Icon />
+                                      Test connection
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
                                       onSelect={() => openEditServerDialog(server)}
                                     >
                                       <PencilIcon />
@@ -765,29 +885,122 @@ function App() {
                 <div className="flex min-w-0 items-start gap-3">
                   <SidebarTrigger className="mt-1 shrink-0" />
                   <div className="min-w-0">
-                    <CardDescription>Selected server</CardDescription>
-                    <CardTitle className="truncate text-2xl">
-                      {selectedServer?.name ?? "No server selected"}
-                    </CardTitle>
-                    {selectedServer && (
-                      <CardDescription className="truncate">
-                        {selectedServer.username}@{selectedServer.host}:
-                        {selectedServer.port}
-                      </CardDescription>
-                    )}
+                    <CardDescription>Secrets</CardDescription>
+                    <CardTitle>Credentials</CardTitle>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <Button
-                    disabled={!selectedServer || busy === "test-server"}
-                    onClick={testSelectedServer}
+                    disabled={!selectedServer}
+                    onClick={openCreateSecretDialog}
                     variant="outline"
                   >
-                    <CheckCircle2Icon data-icon="inline-start" />
-                    Test
+                    <PlusIcon data-icon="inline-start" />
+                    Add secret
                   </Button>
                 </div>
               </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                {selectedSecrets.length ? (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Username</TableHead>
+                          <TableHead>Password</TableHead>
+                          <TableHead>URL</TableHead>
+                          <TableHead>Notes</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {selectedSecrets.map((secret) => (
+                          <TableRow key={secret.id}>
+                            <TableCell className="font-medium">
+                              {secret.name}
+                            </TableCell>
+                            <TableCell>
+                              <SecretValue
+                                label="Username"
+                                onCopy={() =>
+                                  copySecretValue("Username", secret.username)
+                                }
+                                value={secret.username}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <SecretValue
+                                label="Password"
+                                masked
+                                onCopy={() =>
+                                  copySecretValue("Password", secret.password)
+                                }
+                                value={secret.password}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <SecretValue
+                                label="URL"
+                                onCopy={() => copySecretValue("URL", secret.url)}
+                                value={secret.url}
+                              />
+                            </TableCell>
+                            <TableCell className="max-w-64 truncate text-muted-foreground">
+                              {secret.notes || "-"}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  onClick={() => openEditSecretDialog(secret)}
+                                  size="sm"
+                                  type="button"
+                                  variant="outline"
+                                >
+                                  <PencilIcon data-icon="inline-start" />
+                                  Edit
+                                </Button>
+                                <Button
+                                  onClick={() => deleteSecret(secret.id)}
+                                  size="sm"
+                                  type="button"
+                                  variant="destructive"
+                                >
+                                  <Trash2Icon data-icon="inline-start" />
+                                  Delete
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : (
+                  <Empty className="min-h-44 border">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <KeyRoundIcon />
+                      </EmptyMedia>
+                      <EmptyTitle>No secrets for this server</EmptyTitle>
+                      <EmptyDescription>
+                        Store phpMyAdmin, pgAdmin, and database credentials for
+                        quick copy.
+                      </EmptyDescription>
+                    </EmptyHeader>
+                    <EmptyContent>
+                      <Button
+                        disabled={!selectedServer}
+                        onClick={openCreateSecretDialog}
+                        variant="outline"
+                      >
+                        <PlusIcon data-icon="inline-start" />
+                        Add secret
+                      </Button>
+                    </EmptyContent>
+                  </Empty>
+                )}
+              </CardContent>
             </Card>
 
             <Card>
@@ -1108,9 +1321,58 @@ function App() {
           onSubmit={saveForward}
           open={forwardDialogOpen}
         />
+        <SecretDialog
+          busy={busy}
+          disabled={!selectedServer}
+          form={secretForm}
+          mode={editingSecretId ? "edit" : "create"}
+          onFormChange={setSecretForm}
+          onOpenChange={(open) => {
+            setSecretDialogOpen(open);
+            if (!open) {
+              setEditingSecretId(null);
+              setSecretForm(emptySecretForm);
+            }
+          }}
+          onSubmit={saveSecret}
+          open={secretDialogOpen}
+        />
         <Toaster closeButton position="bottom-right" richColors theme="dark" />
       </SidebarProvider>
     </TooltipProvider>
+  );
+}
+
+function SecretValue({
+  label,
+  masked,
+  onCopy,
+  value,
+}: {
+  label: string;
+  masked?: boolean;
+  onCopy: () => void;
+  value?: string | null;
+}) {
+  if (!value) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+
+  return (
+    <div className="flex max-w-56 items-center gap-2">
+      <span className="min-w-0 flex-1 truncate font-mono text-sm">
+        {masked ? "••••••••" : value}
+      </span>
+      <Button
+        aria-label={`Copy ${label}`}
+        onClick={onCopy}
+        size="icon-sm"
+        type="button"
+        variant="ghost"
+      >
+        <CopyIcon />
+      </Button>
+    </div>
   );
 }
 
@@ -1274,6 +1536,126 @@ function ServerDialog({
             <Button disabled={busy === "save-server"} type="submit">
               <PlusIcon data-icon="inline-start" />
               {mode === "edit" ? "Save changes" : "Add server"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SecretDialog({
+  busy,
+  disabled,
+  form,
+  mode,
+  onFormChange,
+  onOpenChange,
+  onSubmit,
+  open,
+}: {
+  busy: string | null;
+  disabled: boolean;
+  form: SecretForm;
+  mode: "create" | "edit";
+  onFormChange: (form: SecretForm) => void;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (event: FormEvent) => void;
+  open: boolean;
+}) {
+  const update = <Key extends keyof SecretForm>(
+    key: Key,
+    value: SecretForm[Key],
+  ) => onFormChange({ ...form, [key]: value });
+
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>
+            {mode === "edit" ? "Edit secret" : "Add secret"}
+          </DialogTitle>
+          <DialogDescription>
+            Store credentials for database admin tools and related services.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={onSubmit}>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="secret-name">Name</FieldLabel>
+              <Input
+                disabled={disabled}
+                id="secret-name"
+                onChange={(event) => update("name", event.currentTarget.value)}
+                placeholder="phpMyAdmin"
+                required
+                value={form.name}
+              />
+            </Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="secret-username">Username</FieldLabel>
+                <Input
+                  disabled={disabled}
+                  id="secret-username"
+                  onChange={(event) =>
+                    update("username", event.currentTarget.value)
+                  }
+                  placeholder="root"
+                  value={form.username}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="secret-password">Password</FieldLabel>
+                <Input
+                  disabled={disabled}
+                  id="secret-password"
+                  onChange={(event) =>
+                    update("password", event.currentTarget.value)
+                  }
+                  type="password"
+                  value={form.password}
+                />
+              </Field>
+            </div>
+            <Field>
+              <FieldLabel htmlFor="secret-url">URL</FieldLabel>
+              <Input
+                disabled={disabled}
+                id="secret-url"
+                onChange={(event) => update("url", event.currentTarget.value)}
+                placeholder="http://127.0.0.1:50000"
+                value={form.url}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="secret-notes">Notes</FieldLabel>
+              <Input
+                disabled={disabled}
+                id="secret-notes"
+                onChange={(event) => update("notes", event.currentTarget.value)}
+                placeholder="database, host, or short hint"
+                value={form.notes}
+              />
+            </Field>
+          </FieldGroup>
+
+          <DialogFooter className="mt-4">
+            <Button
+              onClick={() => onOpenChange(false)}
+              type="button"
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button disabled={disabled || busy === "save-secret"} type="submit">
+              {mode === "edit" ? (
+                <PencilIcon data-icon="inline-start" />
+              ) : (
+                <PlusIcon data-icon="inline-start" />
+              )}
+              {mode === "edit" ? "Save changes" : "Add secret"}
             </Button>
           </DialogFooter>
         </form>
@@ -1528,6 +1910,16 @@ function forwardToForm(forward: ForwardConfig): ForwardForm {
   };
 }
 
+function secretToForm(secret: SecretConfig): SecretForm {
+  return {
+    name: secret.name,
+    username: secret.username ?? "",
+    password: secret.password ?? "",
+    url: secret.url ?? "",
+    notes: secret.notes ?? "",
+  };
+}
+
 function kindLabel(kind: ForwardKind) {
   if (kind === "local") return "-L";
   if (kind === "remote") return "-R";
@@ -1606,6 +1998,33 @@ function isForwardActive(state?: RuntimeState) {
 function serverForwardStatsLabel(stats: { active: number; total: number }) {
   const forwardLabel = stats.total === 1 ? "forward" : "forwards";
   return `${stats.active} active of ${stats.total} ${forwardLabel}`;
+}
+
+function nullableText(value: string) {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+async function copyText(value: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    if (!document.execCommand("copy")) {
+      throw new Error("Clipboard copy was rejected");
+    }
+  } finally {
+    document.body.removeChild(textarea);
+  }
 }
 
 function errorMessage(error: unknown) {
