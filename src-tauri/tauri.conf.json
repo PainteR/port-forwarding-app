@@ -10,11 +10,14 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "port-forwarding-app",
-        "width": 800,
-        "height": 600
+        "width": 1600,
+        "height": 1020,
+        "minWidth": 980,
+        "minHeight": 680
       }
     ],
     "security": {
