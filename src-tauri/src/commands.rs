@@ -2,7 +2,7 @@ use tauri::{AppHandle, State};
 use uuid::Uuid;
 
 use crate::{
-    docker_logs,
+    dock, docker_logs,
     models::{
         DockerCache, DockerLogSession, ForwardConfig, ForwardRuntimeStatus, ForwardSource,
         SecretConfig, ServerConfig,
@@ -38,7 +38,7 @@ pub fn save_server(
 }
 
 #[tauri::command]
-pub fn delete_server(state: State<AppState>, id: String) -> Result<(), String> {
+pub fn delete_server(app: AppHandle, state: State<AppState>, id: String) -> Result<(), String> {
     let forward_ids = state.read(|store| {
         store
             .forwards
@@ -58,7 +58,10 @@ pub fn delete_server(state: State<AppState>, id: String) -> Result<(), String> {
         store.forwards.retain(|forward| forward.server_id != id);
         store.docker_caches.retain(|cache| cache.server_id != id);
         store.secrets.retain(|secret| secret.server_id != id);
-    })
+    })?;
+
+    sync_dock_badge(&app, &state);
+    Ok(())
 }
 
 #[tauri::command]
@@ -153,16 +156,23 @@ pub fn save_forward(
 }
 
 #[tauri::command]
-pub fn delete_forward(state: State<AppState>, id: String) -> Result<(), String> {
+pub fn delete_forward(app: AppHandle, state: State<AppState>, id: String) -> Result<(), String> {
     let _ = state.tunnels.stop(&id);
 
     state.update(|store| {
         store.forwards.retain(|forward| forward.id != id);
-    })
+    })?;
+
+    sync_dock_badge(&app, &state);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn start_forward(state: State<AppState>, id: String) -> Result<ForwardRuntimeStatus, String> {
+pub fn start_forward(
+    app: AppHandle,
+    state: State<AppState>,
+    id: String,
+) -> Result<ForwardRuntimeStatus, String> {
     let (server, forward) = state.read(|store| {
         let forward = store
             .forwards
@@ -185,17 +195,30 @@ pub fn start_forward(state: State<AppState>, id: String) -> Result<ForwardRuntim
     }
 
     let server = server.ok_or_else(|| "Forward server not found".to_string())?;
-    state.tunnels.start(forward, server)
+    let status = state.tunnels.start(forward, server)?;
+    sync_dock_badge(&app, &state);
+    Ok(status)
 }
 
 #[tauri::command]
-pub fn stop_forward(state: State<AppState>, id: String) -> Result<ForwardRuntimeStatus, String> {
-    state.tunnels.stop(&id)
+pub fn stop_forward(
+    app: AppHandle,
+    state: State<AppState>,
+    id: String,
+) -> Result<ForwardRuntimeStatus, String> {
+    let status = state.tunnels.stop(&id)?;
+    sync_dock_badge(&app, &state);
+    Ok(status)
 }
 
 #[tauri::command]
-pub fn list_forward_statuses(state: State<AppState>) -> Result<Vec<ForwardRuntimeStatus>, String> {
-    state.tunnels.statuses()
+pub fn list_forward_statuses(
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<Vec<ForwardRuntimeStatus>, String> {
+    let statuses = state.tunnels.statuses()?;
+    dock::update_active_forward_badge(&app, &statuses);
+    Ok(statuses)
 }
 
 #[tauri::command]
@@ -256,6 +279,13 @@ pub fn start_container_logs(
 #[tauri::command]
 pub fn stop_container_logs(state: State<AppState>, session_id: String) -> Result<(), String> {
     state.docker_logs.stop(&session_id)
+}
+
+fn sync_dock_badge(app: &AppHandle, state: &State<AppState>) {
+    match state.tunnels.statuses() {
+        Ok(statuses) => dock::update_active_forward_badge(app, &statuses),
+        Err(error) => eprintln!("failed to read tunnel statuses for dock badge: {error}"),
+    }
 }
 
 fn find_server(state: &State<AppState>, server_id: &str) -> Result<ServerConfig, String> {

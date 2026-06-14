@@ -1,4 +1,5 @@
 mod commands;
+mod dock;
 mod docker_logs;
 mod models;
 mod ssh;
@@ -19,6 +20,7 @@ pub fn run() {
         .setup(|app| {
             let state = AppState::load(app.handle())?;
             app.manage(state);
+            dock::clear_active_forward_badge(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
