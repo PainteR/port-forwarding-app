@@ -4,8 +4,8 @@ use uuid::Uuid;
 use crate::{
     dock, docker_logs,
     models::{
-        DockerCache, DockerLogSession, ForwardConfig, ForwardRuntimeStatus, ForwardSource,
-        SecretConfig, ServerConfig,
+        docker_cache_key, DockerCache, DockerLogSession, ForwardConfig, ForwardRuntimeStatus,
+        ForwardSource, SecretConfig, ServerConfig,
     },
     ssh,
     storage::AppState,
@@ -32,6 +32,19 @@ pub fn save_server(
     }
 
     state.update(|store| {
+        let next_cache_key = docker_cache_key(&server);
+        let cache_key_changed = store
+            .servers
+            .iter()
+            .find(|existing| existing.id == server.id)
+            .is_some_and(|existing| docker_cache_key(existing) != next_cache_key);
+
+        if cache_key_changed {
+            store
+                .docker_caches
+                .retain(|cache| cache.server_id != server.id);
+        }
+
         upsert(&mut store.servers, server.clone(), |item| &item.id);
         server
     })
@@ -230,9 +243,10 @@ pub fn refresh_docker_containers(
     let cache = ssh::fetch_docker_containers(&server);
 
     state.update(|store| {
-        upsert(&mut store.docker_caches, cache.clone(), |item| {
-            &item.server_id
-        });
+        store
+            .docker_caches
+            .retain(|existing| existing.server_id != cache.server_id);
+        store.docker_caches.push(cache.clone());
         cache
     })
 }
@@ -242,11 +256,14 @@ pub fn list_docker_cache(
     state: State<AppState>,
     server_id: String,
 ) -> Result<Option<DockerCache>, String> {
+    let server = find_server(&state, &server_id)?;
+    let expected_cache_key = docker_cache_key(&server);
+
     state.read(|store| {
         store
             .docker_caches
             .iter()
-            .find(|cache| cache.server_id == server_id)
+            .find(|cache| cache.server_id == server_id && cache.server_key == expected_cache_key)
             .cloned()
     })
 }

@@ -26,7 +26,10 @@ impl AppState {
             .map_err(|error| format!("Failed to create app data directory: {error}"))?;
 
         let storage_path = app_dir.join("state.json");
-        let store = read_store(&storage_path)?;
+        let mut store = read_store(&storage_path)?;
+        if store.normalize_docker_caches() {
+            write_store(&storage_path, &store)?;
+        }
 
         Ok(Self {
             store: Mutex::new(store),

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +99,8 @@ pub struct DockerPort {
 #[serde(rename_all = "camelCase")]
 pub struct DockerCache {
     pub server_id: String,
+    #[serde(default)]
+    pub server_key: String,
     pub fetched_at: String,
     pub containers: Vec<DockerContainer>,
     pub last_error: Option<String>,
@@ -175,9 +179,59 @@ pub struct PersistedState {
     pub secrets: Vec<SecretConfig>,
 }
 
+impl PersistedState {
+    pub fn normalize_docker_caches(&mut self) -> bool {
+        let original_len = self.docker_caches.len();
+        let server_keys = self
+            .servers
+            .iter()
+            .map(|server| (server.id.clone(), docker_cache_key(server)))
+            .collect::<HashMap<_, _>>();
+        let mut latest_by_server = HashMap::<String, DockerCache>::new();
+
+        for cache in self.docker_caches.drain(..) {
+            let Some(expected_key) = server_keys.get(&cache.server_id) else {
+                continue;
+            };
+
+            if cache.server_key != *expected_key {
+                continue;
+            }
+
+            match latest_by_server.entry(cache.server_id.clone()) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    if cache.fetched_at >= entry.get().fetched_at {
+                        entry.insert(cache);
+                    }
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(cache);
+                }
+            }
+        }
+
+        self.docker_caches = self
+            .servers
+            .iter()
+            .filter_map(|server| latest_by_server.remove(&server.id))
+            .collect();
+
+        self.docker_caches.len() != original_len
+    }
+}
+
+pub fn docker_cache_key(server: &ServerConfig) -> String {
+    format!(
+        "{}@{}:{}",
+        server.username.trim(),
+        server.host.trim(),
+        server.port
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AuthConfig, ForwardSource, PersistedState};
+    use super::{docker_cache_key, AuthConfig, ForwardSource, PersistedState, ServerConfig};
     use serde_json::json;
 
     #[test]
@@ -272,5 +326,117 @@ mod tests {
         .expect("older state files without secrets should deserialize");
 
         assert!(state.secrets.is_empty());
+    }
+
+    #[test]
+    fn docker_cache_key_uses_connection_identity() {
+        let server = server("server-a", "Production", " root ", " example.com ");
+
+        assert_eq!(docker_cache_key(&server), "root@example.com:22");
+    }
+
+    #[test]
+    fn persisted_state_discards_orphan_and_legacy_docker_caches() {
+        let mut state: PersistedState = serde_json::from_value(json!({
+            "servers": [
+                server_json("server-a", "Production", "root", "example.com"),
+                server_json("server-b", "Staging", "deploy", "staging.example.com")
+            ],
+            "forwards": [],
+            "secrets": [],
+            "dockerCaches": [
+                {
+                    "serverId": "server-a",
+                    "fetchedAt": "2026-07-04T09:00:00+00:00",
+                    "containers": [],
+                    "lastError": null
+                },
+                {
+                    "serverId": "deleted-server",
+                    "serverKey": "root@deleted.example.com:22",
+                    "fetchedAt": "2026-07-04T10:00:00+00:00",
+                    "containers": [],
+                    "lastError": null
+                },
+                {
+                    "serverId": "server-b",
+                    "serverKey": "deploy@old-staging.example.com:22",
+                    "fetchedAt": "2026-07-04T11:00:00+00:00",
+                    "containers": [],
+                    "lastError": null
+                }
+            ]
+        }))
+        .expect("state should deserialize");
+
+        assert!(state.normalize_docker_caches());
+
+        assert!(state.docker_caches.is_empty());
+    }
+
+    #[test]
+    fn persisted_state_keeps_latest_docker_cache_per_server() {
+        let mut state: PersistedState = serde_json::from_value(json!({
+            "servers": [
+                server_json("server-a", "Production", "root", "example.com")
+            ],
+            "forwards": [],
+            "secrets": [],
+            "dockerCaches": [
+                {
+                    "serverId": "server-a",
+                    "serverKey": "root@example.com:22",
+                    "fetchedAt": "2026-07-04T09:00:00+00:00",
+                    "containers": [
+                        container_json("old123", "old")
+                    ],
+                    "lastError": null
+                },
+                {
+                    "serverId": "server-a",
+                    "serverKey": "root@example.com:22",
+                    "fetchedAt": "2026-07-04T10:00:00+00:00",
+                    "containers": [
+                        container_json("new123", "new")
+                    ],
+                    "lastError": null
+                }
+            ]
+        }))
+        .expect("state should deserialize");
+
+        assert!(state.normalize_docker_caches());
+
+        assert_eq!(state.docker_caches.len(), 1);
+        assert_eq!(state.docker_caches[0].server_id, "server-a");
+        assert_eq!(state.docker_caches[0].containers[0].id, "new123");
+    }
+
+    fn server(id: &str, name: &str, username: &str, host: &str) -> ServerConfig {
+        serde_json::from_value(server_json(id, name, username, host)).expect("server should parse")
+    }
+
+    fn server_json(id: &str, name: &str, username: &str, host: &str) -> serde_json::Value {
+        json!({
+            "id": id,
+            "name": name,
+            "host": host,
+            "port": 22,
+            "username": username,
+            "auth": {
+                "method": "agent"
+            },
+            "connectTimeoutMs": null
+        })
+    }
+
+    fn container_json(id: &str, name: &str) -> serde_json::Value {
+        json!({
+            "id": id,
+            "name": name,
+            "image": "example:latest",
+            "status": "running",
+            "ports": []
+        })
     }
 }

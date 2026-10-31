@@ -193,6 +193,7 @@ type DockerContainer = {
 
 type DockerCache = {
   serverId: string;
+  serverKey: string;
   fetchedAt: string;
   containers: DockerContainer[];
   lastError?: string | null;
@@ -332,6 +333,7 @@ function App() {
   const [logLines, setLogLines] = useState<DockerLogEntry[]>([]);
   const [logError, setLogError] = useState<string | null>(null);
   const activeLogSessionIdRef = useRef<string | null>(null);
+  const selectedServerIdRef = useRef<string | null>(null);
 
   const selectedServer = useMemo(
     () => servers.find((server) => server.id === selectedServerId) ?? null,
@@ -352,6 +354,20 @@ function App() {
         ? secrets.filter((secret) => secret.serverId === selectedServerId)
         : [],
     [secrets, selectedServerId],
+  );
+
+  const selectedServerCacheKey = useMemo(
+    () => (selectedServer ? dockerCacheKey(selectedServer) : null),
+    [selectedServer],
+  );
+
+  const selectedDockerCache = useMemo(
+    () =>
+      dockerCache?.serverId === selectedServerId &&
+      dockerCache.serverKey === selectedServerCacheKey
+        ? dockerCache
+        : null,
+    [dockerCache, selectedServerCacheKey, selectedServerId],
   );
 
   const statusByForward = useMemo(() => {
@@ -402,11 +418,16 @@ function App() {
   }, [selectedServerId, servers]);
 
   useEffect(() => {
+    selectedServerIdRef.current = selectedServerId;
+  }, [selectedServerId]);
+
+  useEffect(() => {
     if (!selectedServerId) {
       setDockerCache(null);
       return;
     }
 
+    setDockerCache(null);
     void loadDockerCache(selectedServerId);
   }, [selectedServerId]);
 
@@ -542,7 +563,9 @@ function App() {
     const cache = await invoke<DockerCache | null>("list_docker_cache", {
       serverId,
     });
-    setDockerCache(cache);
+    if (selectedServerIdRef.current === serverId) {
+      setDockerCache(cache?.serverId === serverId ? cache : null);
+    }
   }
 
   function openCreateServerDialog() {
@@ -605,6 +628,8 @@ function App() {
     setServerDialogOpen(false);
     await reload();
     setSelectedServerId(saved.id);
+    setDockerCache(null);
+    void loadDockerCache(saved.id);
     toast.success("Server saved", {
       description: saved.name,
     });
@@ -831,17 +856,20 @@ function App() {
   }
 
   async function refreshDocker() {
-    if (!selectedServerId) return;
+    const serverId = selectedServerId;
+    if (!serverId) return;
 
     const result = await runAction("refresh-docker", () =>
       invoke<DockerCache>("refresh_docker_containers", {
-        serverId: selectedServerId,
+        serverId,
       }),
     );
     if (!result.ok) return;
     const cache = result.value;
 
-    setDockerCache(cache);
+    if (selectedServerIdRef.current === serverId) {
+      setDockerCache(cache.serverId === serverId ? cache : null);
+    }
     if (cache.lastError) {
       toast.error("Docker refresh failed", {
         description: cache.lastError,
@@ -1421,9 +1449,9 @@ function App() {
                 <div>
                   <CardDescription>Docker</CardDescription>
                   <CardTitle>Containers</CardTitle>
-                  {dockerCache?.fetchedAt && (
+                  {selectedDockerCache?.fetchedAt && (
                     <CardDescription>
-                      Refreshed {formatTime(dockerCache.fetchedAt)}
+                      Refreshed {formatTime(selectedDockerCache.fetchedAt)}
                     </CardDescription>
                   )}
                 </div>
@@ -1437,7 +1465,7 @@ function App() {
                 </Button>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
-                {dockerCache?.containers.length ? (
+                {selectedDockerCache?.containers.length ? (
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -1449,7 +1477,7 @@ function App() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {dockerCache.containers.flatMap((container) => {
+                      {selectedDockerCache.containers.flatMap((container) => {
                         if (!container.ports.length) {
                           return (
                             <TableRow key={`${container.id}-empty`}>
@@ -2386,6 +2414,10 @@ function ForwardDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function dockerCacheKey(server: ServerConfig) {
+  return `${server.username.trim()}@${server.host.trim()}:${server.port}`;
 }
 
 function buildAuth(form: ServerForm): AuthConfig {

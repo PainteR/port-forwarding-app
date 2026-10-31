@@ -10,7 +10,9 @@ use chrono::Utc;
 use serde_json::Value;
 use ssh2::{CheckResult, KnownHostFileKind, Session};
 
-use crate::models::{AuthConfig, DockerCache, DockerContainer, DockerPort, ServerConfig};
+use crate::models::{
+    docker_cache_key, AuthConfig, DockerCache, DockerContainer, DockerPort, ServerConfig,
+};
 
 const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 10_000;
 
@@ -83,12 +85,14 @@ pub fn fetch_docker_containers(server: &ServerConfig) -> DockerCache {
     match result {
         Ok(containers) => DockerCache {
             server_id: server.id.clone(),
+            server_key: docker_cache_key(server),
             fetched_at: Utc::now().to_rfc3339(),
             containers,
             last_error: None,
         },
         Err(error) => DockerCache {
             server_id: server.id.clone(),
+            server_key: docker_cache_key(server),
             fetched_at: Utc::now().to_rfc3339(),
             containers: Vec::new(),
             last_error: Some(error),
