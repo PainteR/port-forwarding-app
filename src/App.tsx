@@ -9,6 +9,7 @@ import {
   CopyIcon,
   EllipsisIcon,
   ExternalLinkIcon,
+  GlobeIcon,
   KeyRoundIcon,
   NetworkIcon,
   PanelLeftIcon,
@@ -34,6 +35,7 @@ import {
 import { toast } from "sonner";
 
 import { OccupiedPortsCard } from "@/components/occupied-ports";
+import { NginxWorkspace } from "@/components/nginx-workspace";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -249,13 +251,19 @@ type DeleteTarget =
 
 type ActionResult<T> = { ok: true; value: T } | { ok: false };
 
-type WorkspaceSection = "forwards" | "containers" | "ports" | "credentials";
+type WorkspaceSection =
+  | "forwards"
+  | "containers"
+  | "ports"
+  | "credentials"
+  | "nginx";
 
 const workspaceSections = [
   { id: "forwards", label: "Forwards", icon: ArrowLeftRightIcon },
   { id: "containers", label: "Containers", icon: BoxesIcon },
   { id: "ports", label: "Ports", icon: NetworkIcon },
   { id: "credentials", label: "Credentials", icon: KeyRoundIcon },
+  { id: "nginx", label: "Nginx", icon: GlobeIcon },
 ] as const;
 
 type AnsiTextStyle = Pick<
@@ -303,6 +311,8 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [serverQuery, setServerQuery] = useState("");
   const [workspaceQuery, setWorkspaceQuery] = useState("");
+  const [nginxNewRequest, setNginxNewRequest] = useState(0);
+  const [nginxBusy, setNginxBusy] = useState(false);
   const [servers, setServers] = useState<ServerConfig[]>([]);
   const [secrets, setSecrets] = useState<SecretConfig[]>([]);
   const [forwards, setForwards] = useState<ForwardConfig[]>([]);
@@ -427,9 +437,13 @@ function App() {
       if (document.querySelector('[role="dialog"], [role="alertdialog"]'))
         return;
 
-      const sectionIndex = ["Digit1", "Digit2", "Digit3", "Digit4"].indexOf(
-        event.code,
-      );
+      const sectionIndex = [
+        "Digit1",
+        "Digit2",
+        "Digit3",
+        "Digit4",
+        "Digit5",
+      ].indexOf(event.code);
       if (sectionIndex >= 0) {
         event.preventDefault();
         setActiveSection(workspaceSections[sectionIndex].id);
@@ -447,15 +461,18 @@ function App() {
         }
       } else if (event.code === "KeyN") {
         event.preventDefault();
+        if (nginxBusy) return;
         if (event.shiftKey || !selectedServerId) openCreateServerDialog();
         else if (activeSection === "credentials") openCreateSecretDialog();
+        else if (activeSection === "nginx")
+          setNginxNewRequest((request) => request + 1);
         else openCreateForwardDialog();
       }
     };
 
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [activeSection, selectedServerId]);
+  }, [activeSection, selectedServerId, nginxBusy]);
 
   useEffect(() => {
     if (!selectedServerId) {
@@ -1098,6 +1115,7 @@ function App() {
             </span>
             <Button
               aria-label="Add server"
+              disabled={nginxBusy}
               onClick={openCreateServerDialog}
               size="icon-sm"
               title="Add server (⇧⌘N)"
@@ -1133,6 +1151,7 @@ function App() {
                     aria-label={`Select ${server.name}`}
                     aria-pressed={server.id === selectedServerId}
                     className="server-selection"
+                    disabled={nginxBusy}
                     onClick={() => setSelectedServerId(server.id)}
                     type="button"
                   >
@@ -1160,6 +1179,7 @@ function App() {
                     <DropdownMenuTrigger asChild>
                       <Button
                         aria-label={`Actions for ${server.name}`}
+                        disabled={nginxBusy}
                         size="icon-sm"
                         title={`Actions for ${server.name}`}
                         variant="ghost"
@@ -1275,6 +1295,7 @@ function App() {
                 <span className="toolbar-divider" />
                 <Button
                   aria-label={`Edit ${selectedServer.name}`}
+                  disabled={nginxBusy}
                   onClick={() => openEditServerDialog(selectedServer)}
                   size="icon-sm"
                   title="Server settings"
@@ -1924,14 +1945,26 @@ function App() {
                     />
                   )}
                 </section>
+                <div hidden={activeSection !== "nginx"} id="workspace-nginx">
+                  <NginxWorkspace
+                    key={`${selectedServerId}-${selectedServerCacheKey}`}
+                    serverId={selectedServer.id}
+                    serverKey={selectedServerCacheKey ?? ""}
+                    serverName={selectedServer.name}
+                    newRequest={nginxNewRequest}
+                    onMutatingChange={setNginxBusy}
+                  />
+                </div>
               </>
             )}
           </main>
           <footer className="app-statusbar">
             <span>
-              {selectedServer
-                ? `${selectedForwards.length} forwards · ${activeCount} active`
-                : "Ready when you are"}
+              {nginxBusy
+                ? "Nginx operation in progress…"
+                : selectedServer
+                  ? `${selectedForwards.length} forwards · ${activeCount} active`
+                  : "Ready when you are"}
             </span>
             <span className="ml-auto">
               {selectedServer

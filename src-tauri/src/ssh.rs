@@ -1,6 +1,6 @@
 use std::{
     env,
-    io::Read,
+    io::{Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
     time::Duration,
@@ -17,6 +17,13 @@ use crate::models::{
 const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 10_000;
 
 pub fn connect(server: &ServerConfig) -> Result<Session, String> {
+    connect_with_io_timeout(server, None)
+}
+
+fn connect_with_io_timeout(
+    server: &ServerConfig,
+    command_timeout: Option<Duration>,
+) -> Result<Session, String> {
     let address = resolve_address(server)?;
     let timeout = Duration::from_millis(
         server
@@ -28,6 +35,12 @@ pub fn connect(server: &ServerConfig) -> Result<Session, String> {
         .map_err(|error| format!("Failed to connect to {}: {error}", server.host))?;
     tcp.set_read_timeout(Some(timeout)).ok();
     tcp.set_write_timeout(Some(timeout)).ok();
+    let command_socket = command_timeout
+        .map(|_| {
+            tcp.try_clone()
+                .map_err(|error| format!("Failed to configure SSH command timeout: {error}"))
+        })
+        .transpose()?;
 
     let mut session =
         Session::new().map_err(|error| format!("Failed to create SSH session: {error}"))?;
@@ -40,6 +53,13 @@ pub fn connect(server: &ServerConfig) -> Result<Session, String> {
     verify_known_host(&session, server)?;
     authenticate(&session, server)?;
     session.set_keepalive(true, 30);
+    if let (Some(socket), Some(timeout)) = (command_socket, command_timeout) {
+        socket
+            .set_read_timeout(Some(timeout))
+            .and_then(|_| socket.set_write_timeout(Some(timeout)))
+            .map_err(|error| format!("Failed to set SSH command timeout: {error}"))?;
+        session.set_timeout(timeout.as_millis().min(u32::MAX as u128) as u32);
+    }
 
     Ok(session)
 }
@@ -75,6 +95,48 @@ pub fn exec(server: &ServerConfig, command: &str) -> Result<CommandOutput, Strin
     Ok(CommandOutput {
         stdout,
         stderr,
+        exit_status,
+    })
+}
+
+/// Run a bounded, noninteractive command with JSON or other text on stdin.
+/// Merging extended data avoids a blocked stderr stream while a command runs.
+pub fn exec_with_input(
+    server: &ServerConfig,
+    command: &str,
+    input: &str,
+    timeout: Duration,
+) -> Result<CommandOutput, String> {
+    let session = connect_with_io_timeout(server, Some(timeout))?;
+    let mut channel = session
+        .channel_session()
+        .map_err(|error| format!("Failed to open SSH command channel: {error}"))?;
+    channel
+        .handle_extended_data(ssh2::ExtendedData::Merge)
+        .map_err(|error| format!("Failed to configure SSH command output: {error}"))?;
+    channel
+        .exec(command)
+        .map_err(|error| format!("Failed to execute remote command: {error}"))?;
+    channel
+        .write_all(input.as_bytes())
+        .map_err(|error| format!("Failed to send remote command input: {error}"))?;
+    channel
+        .send_eof()
+        .map_err(|error| format!("Failed to finish remote command input: {error}"))?;
+    let mut stdout = String::new();
+    channel
+        .read_to_string(&mut stdout)
+        .map_err(|error| format!("Failed to read remote command output: {error}"))?;
+    channel
+        .wait_close()
+        .map_err(|error| format!("Failed to close remote command channel: {error}"))?;
+    let exit_status = channel
+        .exit_status()
+        .map_err(|error| format!("Failed to read remote command exit status: {error}"))?;
+
+    Ok(CommandOutput {
+        stdout,
+        stderr: String::new(),
         exit_status,
     })
 }

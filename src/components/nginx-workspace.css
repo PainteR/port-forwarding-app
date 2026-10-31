@@ -1,0 +1,243 @@
+.nginx-header-actions,
+.nginx-list-toolbar,
+.nginx-inline-actions,
+.nginx-location-heading,
+.nginx-certificate-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.nginx-header-actions {
+  flex-shrink: 0;
+}
+.nginx-list-toolbar {
+  flex-wrap: wrap;
+}
+.nginx-search {
+  position: relative;
+  flex: 1 1 220px;
+  max-width: 360px;
+  margin-right: auto;
+}
+.nginx-search > svg {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+.nginx-search input {
+  padding-left: 31px;
+}
+.nginx-domain-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+.nginx-setup-note,
+.nginx-help {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.nginx-help a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.nginx-progress {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+[data-slot="dialog-content"].nginx-editor-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(960px, calc(100vw - 48px));
+  max-width: none;
+  max-height: calc(100dvh - 48px);
+  gap: 18px;
+  overflow: hidden;
+}
+.nginx-editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 3px 3px;
+}
+.nginx-editor-dialog > [data-slot="dialog-header"] {
+  flex-shrink: 0;
+}
+.nginx-editor-dialog > [data-slot="dialog-footer"] {
+  flex-shrink: 0;
+}
+.nginx-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px 16px;
+}
+.nginx-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.nginx-field > label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+.nginx-field input {
+  width: 100%;
+}
+.nginx-location-heading {
+  justify-content: space-between;
+  margin-top: 5px;
+}
+.nginx-location-heading h3 {
+  font-size: 13px;
+  font-weight: 600;
+}
+.nginx-location-heading p {
+  margin-top: 3px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.nginx-locations {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.nginx-location {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.7fr) minmax(230px, 1.8fr) auto 28px;
+  align-items: end;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--muted) 35%, transparent);
+}
+.nginx-location > .nginx-inline-control {
+  min-height: 29px;
+  padding: 0 4px;
+}
+.nginx-inline-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--foreground);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.nginx-inline-control [data-slot="switch"] {
+  flex-shrink: 0;
+}
+.nginx-inline-actions {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.nginx-certificate-options {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.nginx-operation-pending {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  padding: 12px;
+  background: var(--muted);
+  color: var(--foreground);
+  font-size: 12px;
+}
+.nginx-operation-pending > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.nginx-operation-pending p {
+  margin-top: 4px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.nginx-operation-result {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--muted) 50%, transparent);
+}
+.nginx-operation-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--success);
+}
+.nginx-operation-result[data-success="false"] .nginx-operation-title {
+  color: var(--destructive);
+}
+.nginx-operation-result > .nginx-help {
+  margin-top: 6px;
+}
+.nginx-operation-log {
+  max-height: 230px;
+  overflow: auto;
+  margin-top: 9px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--foreground);
+}
+[data-slot="dialog-content"].nginx-settings-dialog {
+  width: min(560px, calc(100vw - 48px));
+  max-width: none;
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+}
+@media (max-width: 1100px) {
+  .nginx-header-actions {
+    gap: 5px;
+  }
+  .nginx-workspace .workspace-heading {
+    gap: 12px;
+  }
+  .nginx-workspace .native-table [data-slot="table-cell"] {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+}
+@media (max-width: 760px) {
+  [data-slot="dialog-content"].nginx-editor-dialog {
+    width: calc(100vw - 28px);
+    max-height: calc(100dvh - 28px);
+  }
+  .nginx-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .nginx-location {
+    grid-template-columns: minmax(0, 1fr) 28px;
+  }
+  .nginx-location > .nginx-field {
+    grid-column: 1 / -1;
+  }
+  .nginx-editor-footer {
+    flex-wrap: wrap;
+  }
+}

@@ -10,6 +10,7 @@ A desktop SSH tunnel manager built with Tauri, React, and Rust. The app keeps SS
 - Automatic fallback for local and dynamic ports: if the requested port is busy, the app tries a free port from `50000-58000` and shows the actual runtime bind.
 - Docker discovery for the selected server via `docker ps` and `docker inspect`.
 - Occupied server ports with TCP/UDP filters, process and container details, and port search.
+- Nginx site editing, duplication, enable/disable, and domain setup with Certbot webroot certificates.
 - Quick local forward creation for published Docker ports.
 - `docker logs` viewing with an initial tail and live follow.
 - Local storage for servers, forwards, Docker cache, and credential notes.
@@ -30,6 +31,7 @@ A desktop SSH tunnel manager built with Tauri, React, and Rust. The app keeps SS
 - Tauri platform prerequisites for your OS. On macOS, this usually means Xcode Command Line Tools.
 - SSH access to the servers you want to configure.
 - For the Docker section: Docker installed on the remote server and user permissions to run `docker ps`, `docker inspect`, and `docker logs`.
+- For Nginx management: a Linux server with Python 3, Nginx, a `sites-available`/`sites-enabled` layout, and root access or passwordless `sudo`. Certificate issuance also requires Certbot, domain DNS pointing to the server, and inbound HTTP port 80 reachable by Let's Encrypt.
 
 ## Quick Start
 
@@ -59,6 +61,17 @@ cargo check
 cargo test
 ```
 
+Nginx feature checks from the project root:
+
+```bash
+yarn test:nginx
+yarn test:nginx:remote
+# Optional: requires a locally cached nginx:latest Docker image; no image is pulled
+yarn test:nginx:config
+```
+
+The remote-helper tests use temporary directories and fake executables. The Docker check uses temporary certificate fixtures and an isolated, read-only container; neither check changes a configured SSH server or issues a public certificate.
+
 After `yarn tauri build`, build artifacts are written under `src-tauri/target/release/bundle/`.
 
 ## Usage
@@ -69,14 +82,14 @@ After `yarn tauri build`, build artifacts are written under `src-tauri/target/re
 4. Start it with `Start`.
 5. For a local forward, use the `Open in browser` icon to open `http://<bindHost>:<bindPort>`.
 
-Use the sidebar to switch between Forwards, Containers, Ports, and Credentials for the selected server. Server actions are available from each server's More menu. Docker containers appear once, with their published ports grouped in the same row.
+Use the sidebar to switch between Forwards, Containers, Ports, Credentials, and Nginx for the selected server. Server actions are available from each server's More menu. Docker containers appear once, with their published ports grouped in the same row.
 
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| `⌘1`–`⌘4` | Switch workspace section |
-| `⌘N` | New forward, or new credential in Credentials |
+| `⌘1`–`⌘5` | Switch workspace section |
+| `⌘N` | New forward, credential, or Nginx domain in the current section |
 | `⇧⌘N` | Add server |
 | `⌘F` | Focus the current section's search field |
 | `⌘B` | Show or hide the sidebar |
@@ -144,6 +157,29 @@ Then it opens a live follow session:
 docker logs --tail 0 -f <container_id> 2>&1
 ```
 
+## Nginx Domains
+
+Open **Nginx** for the selected SSH server and choose **Refresh** to load its site files. The default layout is `/etc/nginx/sites-available` with symlinks in `/etc/nginx/sites-enabled`. The settings button lets you change the Nginx directory and ACME webroot, and choose whether to use noninteractive `sudo` for a non-root SSH user. These preferences are saved per server. The app does not install remote packages or ask for a sudo password.
+
+**New domain** opens a form for the primary domain, additional names, certificate email, and proxy locations. Each location has an upstream HTTP(S) origin and an explicit option to remove its path prefix. For example, `/b/` with prefix removal forwards `/b/users` to `/users`; with preservation it forwards `/b/users` unchanged. The default template matches the supplied `nginxconfig.io` layout. Turn off shared includes if those snippets are not installed on the server.
+
+Review and edit the full generated configuration before applying it. **Save draft** writes a disabled file without enabling or syntax-testing that draft. **Issue certificate & enable HTTPS** runs the complete setup:
+
+1. Check that the domain is not already enabled in another site and that the target file has not changed.
+2. Back up the existing file and enabled symlinks under `<nginx directory>/.port-forward-backups`.
+3. Write an HTTP-only site with an explicit ACME challenge location using the configured webroot, then enable it with a symlink.
+4. Run `nginx -t`, confirm the site is actually included by Nginx, and send a reload signal.
+5. Run `certbot certonly --webroot` with the requested domains, email, webroot, and explicit certificate name. Existing certificates are kept until renewal is needed; force renewal is an explicit option. Certificate issuance accepts the Let's Encrypt subscriber agreement.
+6. Write the reviewed HTTPS configuration, test it, and reload Nginx again.
+
+On a handled failure, the helper restores the previous site file and symlinks and, when needed, reloads that restored configuration. Operation output and backup paths remain visible in the app. Certificates already issued by Certbot are not deleted or revoked during rollback. An existing enabled TLS site uses **Save & apply** for configuration changes; the bootstrap workflow does not silently remove working HTTPS.
+
+Existing sites can be edited as raw Nginx configuration, duplicated with domain replacement, enabled, or disabled. The editor highlights Nginx directives, variables, strings, numbers, and comments, follows the system appearance, and provides line numbers, bracket matching, and undo/redo. The raw editor preserves directives that the new-domain form does not model. Review copied aliases, certificate paths, upstream ports, and locations before applying a duplicate. The separate **Test configuration** and **Test & reload** actions show command output. A successful reload command confirms the signal was sent, not an external health check of the service.
+
+Mutating operations are serialized on the server, use atomic file replacement, and reject changed revisions, path traversal, and conflicting enabled entries. While an operation is running, the app prevents switching or editing the SSH server. Unsupported site layouts, missing tools, and permission errors are reported without automatically installing or changing server-wide settings.
+
+Domain DNS and HTTP port 80 must be reachable before issuance. Keep the ACME challenge location available for future renewals. Certbot's existing timer/cron configuration remains responsible for automatic renewal; configure its deploy hook to test and reload Nginx after a successful renewal if your installation does not already do so. See the [Certbot webroot and renewal guidance](https://eff-certbot.readthedocs.io/en/stable/using.html#webroot) and [Nginx reload documentation](https://nginx.org/en/docs/control.html).
+
 ## Local Data and Security
 
 The app stores state in the Tauri app data directory in a `state.json` file. It contains:
@@ -175,6 +211,8 @@ src-tauri/
     ssh.rs             SSH connection, auth, Docker discovery
     tunnel.rs          Local, remote and dynamic forwarding runtime
     docker_logs.rs     Docker log sessions and event emission
+    nginx.rs           Nginx commands and SSH transport for site management
+    nginx_remote.py    Remote Nginx transactions, backups, Certbot workflow
     storage.rs         state.json persistence
     dock.rs            macOS Dock badge
     lib.rs             Tauri app setup and plugin registration

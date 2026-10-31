@@ -1,0 +1,101 @@
+.nginx-code-editor {
+  --nginx-syntax-directive: #0550ae;
+  --nginx-syntax-block: #8250df;
+  --nginx-syntax-variable: #953800;
+  --nginx-syntax-string: #116329;
+  --nginx-syntax-number: #9a3d09;
+  --nginx-syntax-comment: #6e7781;
+  width: 100%;
+  min-height: 300px;
+  height: min(42vh, 420px);
+  resize: vertical;
+  overflow: hidden;
+  border: 1px solid var(--input);
+  border-radius: 9px;
+  background: var(--control);
+  color: var(--foreground);
+}
+.dark .nginx-code-editor {
+  --nginx-syntax-directive: #79c0ff;
+  --nginx-syntax-block: #d2a8ff;
+  --nginx-syntax-variable: #ffa657;
+  --nginx-syntax-string: #a5d6a7;
+  --nginx-syntax-number: #f2cc8f;
+  --nginx-syntax-comment: #929ba5;
+}
+.nginx-code-editor:focus-within {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.nginx-code-editor[data-disabled="true"] {
+  opacity: 0.7;
+}
+.nginx-code-editor .cm-editor {
+  height: 100%;
+  background: transparent;
+}
+.nginx-code-editor .cm-editor.cm-focused {
+  outline: none;
+}
+.nginx-code-editor .cm-scroller {
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.65;
+}
+.nginx-code-editor .cm-content {
+  min-height: 100%;
+  padding: 13px 0;
+  caret-color: var(--foreground);
+}
+.nginx-code-editor .cm-line {
+  padding: 0 12px;
+}
+.nginx-code-editor .cm-gutters {
+  background: color-mix(in srgb, var(--muted) 55%, var(--control));
+  color: var(--muted-foreground);
+  border-right: 1px solid var(--border);
+}
+.nginx-code-editor .cm-lineNumbers .cm-gutterElement {
+  min-width: 36px;
+  padding: 0 9px 0 6px;
+}
+.nginx-code-editor .cm-activeLineGutter {
+  background: var(--selection);
+  color: var(--foreground);
+}
+.nginx-code-editor .cm-cursor {
+  border-left-color: var(--foreground);
+}
+.nginx-code-editor .cm-selectionBackground,
+.nginx-code-editor .cm-focused .cm-selectionBackground {
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
+}
+.nginx-code-editor .cm-content ::selection {
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
+}
+.nginx-code-editor .cm-matchingBracket {
+  background: color-mix(in srgb, var(--primary) 15%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  border-radius: 2px;
+}
+.nginx-code-editor .nginx-token-directive,
+.nginx-code-editor .nginx-token-name {
+  color: var(--nginx-syntax-directive);
+}
+.nginx-code-editor .nginx-token-block {
+  color: var(--nginx-syntax-block);
+}
+.nginx-code-editor .nginx-token-variable {
+  color: var(--nginx-syntax-variable);
+}
+.nginx-code-editor .nginx-token-string {
+  color: var(--nginx-syntax-string);
+}
+.nginx-code-editor .nginx-token-number {
+  color: var(--nginx-syntax-number);
+}
+.nginx-code-editor .nginx-token-comment {
+  color: var(--nginx-syntax-comment);
+  font-style: italic;
+}

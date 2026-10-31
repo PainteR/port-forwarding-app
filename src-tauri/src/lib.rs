@@ -2,6 +2,7 @@ mod commands;
 mod dock;
 mod docker_logs;
 mod models;
+mod nginx;
 mod occupied_ports;
 mod ssh;
 mod storage;
@@ -43,6 +44,13 @@ pub fn run() {
             commands::stop_container_logs,
             commands::stop_forward,
             commands::test_connection,
+            nginx::list_nginx_sites,
+            nginx::read_nginx_site,
+            nginx::save_nginx_site,
+            nginx::set_nginx_site_enabled,
+            nginx::test_nginx_configuration,
+            nginx::reload_nginx_configuration,
+            nginx::provision_nginx_site,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
