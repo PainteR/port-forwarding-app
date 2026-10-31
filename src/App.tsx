@@ -3,18 +3,21 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowDownIcon,
+  ArrowLeftRightIcon,
   BoxesIcon,
   CheckCircle2Icon,
   CopyIcon,
   EllipsisIcon,
   ExternalLinkIcon,
   KeyRoundIcon,
+  NetworkIcon,
+  PanelLeftIcon,
   PencilIcon,
   PlayIcon,
-  PlugIcon,
   PlusIcon,
   RefreshCwIcon,
   ScrollTextIcon,
+  SearchIcon,
   ServerIcon,
   SquareIcon,
   Trash2Icon,
@@ -30,6 +33,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 
+import { OccupiedPortsCard } from "@/components/occupied-ports";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,13 +46,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -61,7 +58,6 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -86,21 +82,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
 import {
   Table,
   TableBody,
@@ -268,6 +249,15 @@ type DeleteTarget =
 
 type ActionResult<T> = { ok: true; value: T } | { ok: false };
 
+type WorkspaceSection = "forwards" | "containers" | "ports" | "credentials";
+
+const workspaceSections = [
+  { id: "forwards", label: "Forwards", icon: ArrowLeftRightIcon },
+  { id: "containers", label: "Containers", icon: BoxesIcon },
+  { id: "ports", label: "Ports", icon: NetworkIcon },
+  { id: "credentials", label: "Credentials", icon: KeyRoundIcon },
+] as const;
+
 type AnsiTextStyle = Pick<
   CSSProperties,
   | "backgroundColor"
@@ -308,6 +298,11 @@ const emptySecretForm: SecretForm = {
 };
 
 function App() {
+  const [activeSection, setActiveSection] =
+    useState<WorkspaceSection>("forwards");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [serverQuery, setServerQuery] = useState("");
+  const [workspaceQuery, setWorkspaceQuery] = useState("");
   const [servers, setServers] = useState<ServerConfig[]>([]);
   const [secrets, setSecrets] = useState<SecretConfig[]>([]);
   const [forwards, setForwards] = useState<ForwardConfig[]>([]);
@@ -420,6 +415,47 @@ function App() {
   useEffect(() => {
     selectedServerIdRef.current = selectedServerId;
   }, [selectedServerId]);
+
+  useEffect(() => {
+    setWorkspaceQuery("");
+  }, [activeSection, selectedServerId]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.repeat)
+        return;
+      if (document.querySelector('[role="dialog"], [role="alertdialog"]'))
+        return;
+
+      const sectionIndex = ["Digit1", "Digit2", "Digit3", "Digit4"].indexOf(
+        event.code,
+      );
+      if (sectionIndex >= 0) {
+        event.preventDefault();
+        setActiveSection(workspaceSections[sectionIndex].id);
+      } else if (event.code === "KeyB") {
+        event.preventDefault();
+        setSidebarOpen((open) => !open);
+      } else if (event.code === "KeyF") {
+        const input = document.querySelector<HTMLInputElement>(
+          `#workspace-${activeSection} input[type="search"]`,
+        );
+        if (input) {
+          event.preventDefault();
+          input.focus();
+          input.select();
+        }
+      } else if (event.code === "KeyN") {
+        event.preventDefault();
+        if (event.shiftKey || !selectedServerId) openCreateServerDialog();
+        else if (activeSection === "credentials") openCreateSecretDialog();
+        else openCreateForwardDialog();
+      }
+    };
+
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [activeSection, selectedServerId]);
 
   useEffect(() => {
     if (!selectedServerId) {
@@ -690,7 +726,7 @@ function App() {
     setEditingSecretId(null);
     setSecretDialogOpen(false);
     await reload();
-    toast.success("Secret saved", {
+    toast.success("Credential saved", {
       description: saved.name,
     });
   }
@@ -702,7 +738,7 @@ function App() {
     if (!result.ok) return;
 
     await reload();
-    toast.success("Secret deleted");
+    toast.success("Credential deleted");
   }
 
   async function copySecretValue(label: string, value?: string | null) {
@@ -971,700 +1007,1065 @@ function App() {
     });
   }
 
+  const search = workspaceQuery.trim().toLowerCase();
+  const visibleServers = servers.filter((server) =>
+    `${server.name} ${server.host} ${server.username}`
+      .toLowerCase()
+      .includes(serverQuery.trim().toLowerCase()),
+  );
+  const visibleForwards = selectedForwards.filter((forward) =>
+    `${forward.name} ${kindLabel(forward.kind)} ${bindLabel(forward, statusByForward.get(forward.id))} ${targetLabel(forward)}`
+      .toLowerCase()
+      .includes(search),
+  );
+  const visibleContainers = (selectedDockerCache?.containers ?? []).filter(
+    (container) =>
+      `${container.name} ${container.image} ${container.ports.map((port) => `${port.publicPort ?? ""} ${port.privatePort} ${port.protocol}`).join(" ")}`
+        .toLowerCase()
+        .includes(search),
+  );
+  const visibleSecrets = selectedSecrets.filter((secret) =>
+    `${secret.name} ${secret.username ?? ""} ${secret.url ?? ""} ${secret.notes ?? ""}`
+      .toLowerCase()
+      .includes(search),
+  );
+  const activeCount = selectedForwards.filter((forward) =>
+    isForwardActive(statusByForward.get(forward.id)?.state),
+  ).length;
+  const activeTotal = statuses.filter((status) =>
+    isForwardActive(status.state),
+  ).length;
+  const sectionLabel = workspaceSections.find(
+    (section) => section.id === activeSection,
+  )!.label;
+
   return (
     <TooltipProvider>
-      <SidebarProvider
-        style={
-          {
-            "--sidebar-width": "21rem",
-          } as CSSProperties
-        }
-      >
-        <Sidebar collapsible="offcanvas">
-          <SidebarHeader className="pt-10" data-tauri-drag-region>
-            <div className="flex items-center gap-3 px-2 py-2">
-              <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <ServerIcon />
-              </div>
-              <div className="min-w-0">
-                <div className="truncate font-heading text-base font-semibold">
-                  Port Forward
-                </div>
-                <div className="truncate text-sm text-muted-foreground">
-                  Native SSH tunnel manager
-                </div>
-              </div>
-            </div>
-          </SidebarHeader>
-
-          <SidebarContent>
-            <SidebarGroup>
-              <SidebarGroupLabel>Servers</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <ScrollArea className="h-52">
-                  {servers.length ? (
-                    <SidebarMenu>
-                      {servers.map((server) => {
-                        const stats = serverForwardStats.get(server.id) ?? {
-                          active: 0,
-                          total: 0,
-                        };
-                        return (
-                          <SidebarMenuItem key={server.id}>
-                            <div className="flex items-center gap-1">
-                              <SidebarMenuButton
-                                className="min-w-0 flex-1"
-                                isActive={server.id === selectedServerId}
-                                onClick={() => setSelectedServerId(server.id)}
-                              >
-                                <PlugIcon />
-                                <span className="min-w-0 flex-1 truncate">
-                                  {server.name}
-                                </span>
-                                <Badge
-                                  aria-label={serverForwardStatsLabel(stats)}
-                                  className="shrink-0 tabular-nums"
-                                  variant={
-                                    stats.active ? "default" : "secondary"
-                                  }
-                                >
-                                  {stats.active}/{stats.total}
-                                </Badge>
-                              </SidebarMenuButton>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    aria-label={`Actions for ${server.name}`}
-                                    size="icon-sm"
-                                    variant="ghost"
-                                  >
-                                    <EllipsisIcon />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent
-                                  align="end"
-                                  className="w-44"
-                                >
-                                  <DropdownMenuGroup>
-                                    <DropdownMenuLabel>
-                                      Server
-                                    </DropdownMenuLabel>
-                                    <DropdownMenuItem
-                                      disabled={
-                                        busy === `test-server-${server.id}`
-                                      }
-                                      onSelect={() => {
-                                        void testServer(server);
-                                      }}
-                                    >
-                                      <CheckCircle2Icon />
-                                      Test connection
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      onSelect={() =>
-                                        openEditServerDialog(server)
-                                      }
-                                    >
-                                      <PencilIcon />
-                                      Edit
-                                    </DropdownMenuItem>
-                                  </DropdownMenuGroup>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuGroup>
-                                    <DropdownMenuItem
-                                      onSelect={() => {
-                                        setPendingDelete({
-                                          kind: "server",
-                                          id: server.id,
-                                          name: server.name,
-                                        });
-                                      }}
-                                      variant="destructive"
-                                    >
-                                      <Trash2Icon />
-                                      Delete
-                                    </DropdownMenuItem>
-                                  </DropdownMenuGroup>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
-                            <div className="px-8 pb-2 text-xs text-muted-foreground">
-                              <span className="block truncate">
-                                {server.username}@{server.host}:{server.port}
-                              </span>
-                              <span className="block truncate">
-                                {serverForwardStatsLabel(stats)}
-                              </span>
-                            </div>
-                          </SidebarMenuItem>
-                        );
-                      })}
-                    </SidebarMenu>
-                  ) : (
-                    <Empty className="min-h-32 border border-dashed">
-                      <EmptyHeader>
-                        <EmptyMedia variant="icon">
-                          <ServerIcon />
-                        </EmptyMedia>
-                        <EmptyTitle>No servers</EmptyTitle>
-                        <EmptyDescription>
-                          Add a server profile to create tunnels.
-                        </EmptyDescription>
-                      </EmptyHeader>
-                    </Empty>
-                  )}
-                </ScrollArea>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          </SidebarContent>
-
-          <SidebarFooter>
-            <Button onClick={openCreateServerDialog}>
-              <PlusIcon data-icon="inline-start" />
-              Add server
+      <div className="app-shell" data-sidebar={sidebarOpen ? "open" : "closed"}>
+        <aside
+          aria-label="Server navigation"
+          className="app-sidebar"
+          hidden={!sidebarOpen}
+        >
+          <div className="sidebar-titlebar" data-tauri-drag-region />
+          <div className="sidebar-brand" data-tauri-drag-region>
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-foreground/5">
+              <ArrowLeftRightIcon className="size-4" />
+            </span>
+            <span>Port Forward</span>
+            <Button
+              aria-label="Hide sidebar"
+              className="ml-auto"
+              onClick={() => setSidebarOpen(false)}
+              size="icon-sm"
+              title="Hide sidebar (⌘B)"
+              variant="ghost"
+            >
+              <PanelLeftIcon />
             </Button>
-          </SidebarFooter>
-        </Sidebar>
+          </div>
+          <nav aria-label="Workspace" className="px-3 py-3">
+            {workspaceSections.map(({ id, label, icon: Icon }, index) => (
+              <button
+                aria-current={activeSection === id ? "page" : undefined}
+                className="sidebar-nav-item"
+                data-active={activeSection === id}
+                key={id}
+                onClick={() => setActiveSection(id)}
+                title={`${label} (⌘${index + 1})`}
+                type="button"
+              >
+                <Icon aria-hidden="true" className="size-4" />
+                <span>{label}</span>
+                {id === "forwards" && selectedForwards.length > 0 && (
+                  <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
+                    {selectedForwards.length}
+                  </span>
+                )}
+                {id === "containers" &&
+                  !!selectedDockerCache?.containers.length && (
+                    <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
+                      {selectedDockerCache.containers.length}
+                    </span>
+                  )}
+              </button>
+            ))}
+          </nav>
+          <div className="flex items-center justify-between px-5 pt-3 pb-2">
+            <span className="sidebar-section-label">
+              Servers{" "}
+              <span className="ml-1 tabular-nums">{servers.length}</span>
+            </span>
+            <Button
+              aria-label="Add server"
+              onClick={openCreateServerDialog}
+              size="icon-sm"
+              title="Add server (⇧⌘N)"
+              variant="ghost"
+            >
+              <PlusIcon />
+            </Button>
+          </div>
+          <div className="sidebar-search relative mx-3 mb-2">
+            <SearchIcon aria-hidden="true" />
+            <Input
+              aria-label="Find a server"
+              className="pl-8"
+              onChange={(event) => setServerQuery(event.target.value)}
+              placeholder="Find a server…"
+              type="search"
+              value={serverQuery}
+            />
+          </div>
+          <div className="server-list">
+            {visibleServers.map((server) => {
+              const stats = serverForwardStats.get(server.id) ?? {
+                active: 0,
+                total: 0,
+              };
+              return (
+                <div
+                  className="server-row"
+                  data-active={server.id === selectedServerId}
+                  key={server.id}
+                >
+                  <button
+                    aria-label={`Select ${server.name}`}
+                    aria-pressed={server.id === selectedServerId}
+                    className="server-selection"
+                    onClick={() => setSelectedServerId(server.id)}
+                    type="button"
+                  >
+                    <span className="server-avatar">
+                      <ServerIcon aria-hidden="true" className="size-4" />
+                    </span>
+                    <span className="server-meta">
+                      <span className="truncate font-medium">
+                        {server.name}
+                      </span>
+                      <span className="truncate text-[11px] text-muted-foreground">
+                        {server.host}
+                      </span>
+                    </span>
+                    {stats.active > 0 && (
+                      <span
+                        aria-label={serverForwardStatsLabel(stats)}
+                        className="connection-dot shrink-0"
+                        data-state="running"
+                        title={serverForwardStatsLabel(stats)}
+                      />
+                    )}
+                  </button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label={`Actions for ${server.name}`}
+                        size="icon-sm"
+                        title={`Actions for ${server.name}`}
+                        variant="ghost"
+                      >
+                        <EllipsisIcon />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start">
+                      <DropdownMenuLabel>{server.name}</DropdownMenuLabel>
+                      <DropdownMenuItem
+                        disabled={busy === `test-server-${server.id}`}
+                        onSelect={() => void testServer(server)}
+                      >
+                        <CheckCircle2Icon />
+                        Test connection
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() => openEditServerDialog(server)}
+                      >
+                        <PencilIcon />
+                        Edit server…
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          setPendingDelete({
+                            kind: "server",
+                            id: server.id,
+                            name: server.name,
+                          })
+                        }
+                        variant="destructive"
+                      >
+                        <Trash2Icon />
+                        Delete server…
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              );
+            })}
+            {!visibleServers.length && (
+              <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                {servers.length
+                  ? "No matching servers"
+                  : "Add your first SSH server."}
+              </p>
+            )}
+          </div>
+          <div className="sidebar-bottom">
+            <span
+              className="status-indicator"
+              data-state={activeTotal ? "running" : "stopped"}
+            />
+            <span>
+              {activeTotal
+                ? `${activeTotal} active ${activeTotal === 1 ? "tunnel" : "tunnels"}`
+                : "No active tunnels"}
+            </span>
+            <span className="ml-auto text-[10px] text-muted-foreground">
+              SSH
+            </span>
+          </div>
+        </aside>
 
-        <SidebarInset>
-          <header className="flex h-[4.5rem] shrink-0 items-center gap-3 border-b bg-background/95 px-4 md:px-6">
-            <SidebarTrigger className="shrink-0" />
+        <div className="workspace">
+          <header className="window-toolbar">
+            {!sidebarOpen && (
+              <Button
+                aria-label="Show sidebar"
+                onClick={() => setSidebarOpen(true)}
+                size="icon-sm"
+                title="Show sidebar (⌘B)"
+                variant="ghost"
+              >
+                <PanelLeftIcon />
+              </Button>
+            )}
             <div className="min-w-0">
-              <div className="truncate text-sm text-muted-foreground">
+              <div className="toolbar-title">
+                {selectedServer?.name ?? "Port Forward"}
+                <span className="mx-2 font-normal text-muted-foreground/50">
+                  /
+                </span>
+                <span className="font-normal text-muted-foreground">
+                  {sectionLabel}
+                </span>
+              </div>
+              <div className="toolbar-subtitle">
                 {selectedServer
                   ? `${selectedServer.username}@${selectedServer.host}:${selectedServer.port}`
-                  : "No server selected"}
-              </div>
-              <div className="truncate font-heading text-lg font-semibold">
-                {selectedServer?.name ?? "Port Forward"}
+                  : "SSH workspaces"}
               </div>
             </div>
             <div
               aria-hidden="true"
-              className="min-w-8 flex-1 self-stretch"
+              className="min-w-4 flex-1 self-stretch"
               data-tauri-drag-region
             />
-          </header>
-          <main className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4 md:p-6">
-            <Card>
-              <CardHeader className="flex flex-row items-start justify-between gap-4">
-                <div className="flex min-w-0 items-start gap-3">
-                  <div className="min-w-0">
-                    <CardDescription>Secrets</CardDescription>
-                    <CardTitle>Credentials</CardTitle>
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <Button
-                    disabled={!selectedServer}
-                    onClick={openCreateSecretDialog}
-                    variant="outline"
-                  >
-                    <PlusIcon data-icon="inline-start" />
-                    Add secret
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-4">
-                {selectedSecrets.length ? (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Name</TableHead>
-                          <TableHead>Username</TableHead>
-                          <TableHead>Password</TableHead>
-                          <TableHead>URL</TableHead>
-                          <TableHead>Notes</TableHead>
-                          <TableHead className="text-right">Actions</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {selectedSecrets.map((secret) => (
-                          <TableRow key={secret.id}>
-                            <TableCell className="font-medium">
-                              {secret.name}
-                            </TableCell>
-                            <TableCell>
-                              <SecretValue
-                                label="Username"
-                                onCopy={() =>
-                                  copySecretValue("Username", secret.username)
-                                }
-                                value={secret.username}
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <SecretValue
-                                label="Password"
-                                masked
-                                onCopy={() =>
-                                  copySecretValue("Password", secret.password)
-                                }
-                                value={secret.password}
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <SecretValue
-                                label="URL"
-                                onCopy={() =>
-                                  copySecretValue("URL", secret.url)
-                                }
-                                value={secret.url}
-                              />
-                            </TableCell>
-                            <TableCell className="max-w-64 truncate text-muted-foreground">
-                              {secret.notes || "-"}
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex justify-end gap-2">
-                                <Button
-                                  onClick={() => openEditSecretDialog(secret)}
-                                  size="sm"
-                                  type="button"
-                                  variant="outline"
-                                >
-                                  <PencilIcon data-icon="inline-start" />
-                                  Edit
-                                </Button>
-                                <Button
-                                  onClick={() =>
-                                    setPendingDelete({
-                                      kind: "secret",
-                                      id: secret.id,
-                                      name: secret.name,
-                                    })
-                                  }
-                                  size="sm"
-                                  type="button"
-                                  variant="destructive"
-                                >
-                                  <Trash2Icon data-icon="inline-start" />
-                                  Delete
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <Empty className="min-h-44 border">
-                    <EmptyHeader>
-                      <EmptyMedia variant="icon">
-                        <KeyRoundIcon />
-                      </EmptyMedia>
-                      <EmptyTitle>No secrets for this server</EmptyTitle>
-                      <EmptyDescription>
-                        Store phpMyAdmin, pgAdmin, and database credentials for
-                        quick copy.
-                      </EmptyDescription>
-                    </EmptyHeader>
-                    <EmptyContent>
-                      <Button
-                        disabled={!selectedServer}
-                        onClick={openCreateSecretDialog}
-                        variant="outline"
-                      >
-                        <PlusIcon data-icon="inline-start" />
-                        Add secret
-                      </Button>
-                    </EmptyContent>
-                  </Empty>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-start justify-between gap-4">
-                <div>
-                  <CardDescription>Tunnels</CardDescription>
-                  <CardTitle>Forwards</CardTitle>
-                </div>
+            {selectedServer && (
+              <div className="toolbar-actions">
                 <Button
-                  disabled={!selectedServer}
-                  onClick={openCreateForwardDialog}
-                  variant="outline"
+                  disabled={busy === `test-server-${selectedServer.id}`}
+                  onClick={() => void testServer(selectedServer)}
+                  size="sm"
+                  variant="ghost"
                 >
-                  <PlusIcon data-icon="inline-start" />
-                  Add forward
+                  <CheckCircle2Icon data-icon="inline-start" />
+                  {busy === `test-server-${selectedServer.id}`
+                    ? "Connecting…"
+                    : "Test connection"}
                 </Button>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-4">
-                {selectedForwards.length ? (
-                  <div className="overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Type</TableHead>
-                          <TableHead>Name</TableHead>
-                          <TableHead>Bind</TableHead>
-                          <TableHead>Target</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead className="text-right">Actions</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {selectedForwards.map((forward) => {
-                          const status = statusByForward.get(forward.id);
-                          const active = isForwardActive(status?.state);
-                          const runtimeBind = bindLabel(forward, status);
-                          const usesRuntimePort = isUsingRuntimeBind(
-                            forward,
-                            status,
-                          );
-                          return (
-                            <TableRow key={forward.id}>
-                              <TableCell>
-                                <Badge variant="secondary">
-                                  {kindLabel(forward.kind)}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="font-medium">
-                                {forward.name}
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex flex-col gap-1">
-                                  <span>{runtimeBind}</span>
-                                  {usesRuntimePort && (
-                                    <span className="text-xs text-muted-foreground">
+                <span className="toolbar-divider" />
+                <Button
+                  aria-label={`Edit ${selectedServer.name}`}
+                  onClick={() => openEditServerDialog(selectedServer)}
+                  size="icon-sm"
+                  title="Server settings"
+                  variant="ghost"
+                >
+                  <EllipsisIcon />
+                </Button>
+              </div>
+            )}
+          </header>
+
+          <main className="workspace-content">
+            {!selectedServer ? (
+              <div className="empty-workspace">
+                <div className="mb-5 flex size-14 items-center justify-center rounded-2xl bg-muted">
+                  <ArrowLeftRightIcon className="size-7 text-muted-foreground" />
+                </div>
+                <p className="workspace-eyebrow">Port Forward</p>
+                <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+                  Connect to your first server
+                </h1>
+                <p className="mt-3 max-w-sm text-center leading-relaxed text-muted-foreground">
+                  Add an SSH server to manage tunnels, containers, and ports.
+                </p>
+                <Button className="mt-6" onClick={openCreateServerDialog}>
+                  <PlusIcon data-icon="inline-start" />
+                  Add your first server
+                </Button>
+                <span className="mt-3 text-xs text-muted-foreground">⇧⌘N</span>
+              </div>
+            ) : (
+              <>
+                <section
+                  aria-label="Forwards"
+                  className="workspace-section"
+                  hidden={activeSection !== "forwards"}
+                  id="workspace-forwards"
+                >
+                  <div className="workspace-heading">
+                    <div>
+                      <p className="workspace-eyebrow">SSH tunnels</p>
+                      <h1>Forwards</h1>
+                      <p className="mt-1 text-muted-foreground">
+                        Local, remote, and SOCKS tunnels for{" "}
+                        {selectedServer.name}.
+                      </p>
+                    </div>
+                    <Button
+                      onClick={openCreateForwardDialog}
+                      title="New forward (⌘N)"
+                    >
+                      <PlusIcon data-icon="inline-start" />
+                      New forward
+                    </Button>
+                  </div>
+                  <div className="workspace-summary">
+                    <span className="stat-item">
+                      <span className="stat-value">
+                        {selectedForwards.length}
+                      </span>
+                      <span className="stat-label">total</span>
+                    </span>
+                    <span className="stat-item">
+                      <span className="status-indicator" data-state="running" />
+                      <span className="stat-value">{activeCount}</span>
+                      <span className="stat-label">active</span>
+                    </span>
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {selectedServer.host}
+                    </span>
+                  </div>
+                  <WorkspaceSearch
+                    label="Search forwards"
+                    onChange={setWorkspaceQuery}
+                    placeholder="Find a forward…"
+                    value={workspaceQuery}
+                  />
+                  {visibleForwards.length ? (
+                    <div className="native-table">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Name</TableHead>
+                            <TableHead>Bind address</TableHead>
+                            <TableHead>Destination</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead className="text-right">
+                              <span className="sr-only">Actions</span>
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {visibleForwards.map((forward) => {
+                            const status = statusByForward.get(forward.id);
+                            const active = isForwardActive(status?.state);
+                            return (
+                              <TableRow key={forward.id}>
+                                <TableCell>
+                                  <div className="name-cell">
+                                    <span className="flex size-8 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                                      <ArrowLeftRightIcon className="size-4" />
+                                    </span>
+                                    <div className="min-w-0">
+                                      <span className="font-medium">
+                                        {forward.name}
+                                      </span>
+                                      <div className="row-subtitle">
+                                        {kindLabel(forward.kind)} ·{" "}
+                                        {forward.source &&
+                                        "docker" in forward.source
+                                          ? "Docker"
+                                          : forward.kind === "dynamic"
+                                            ? "SOCKS proxy"
+                                            : `${forward.kind} forward`}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </TableCell>
+                                <TableCell>
+                                  <span className="endpoint">
+                                    {bindLabel(forward, status)}
+                                  </span>
+                                  {isUsingRuntimeBind(forward, status) && (
+                                    <div className="row-subtitle">
                                       Configured {forward.bindHost}:
                                       {forward.bindPort}
-                                    </span>
+                                    </div>
                                   )}
-                                </div>
-                              </TableCell>
-                              <TableCell>{targetLabel(forward)}</TableCell>
-                              <TableCell>
-                                <div className="flex flex-col gap-1">
-                                  <Badge variant={statusVariant(status?.state)}>
+                                </TableCell>
+                                <TableCell className="endpoint">
+                                  {targetLabel(forward)}
+                                </TableCell>
+                                <TableCell>
+                                  <span className="status-label">
+                                    <span
+                                      className="status-indicator"
+                                      data-state={status?.state ?? "stopped"}
+                                    />
                                     {status?.state ?? "stopped"}
-                                  </Badge>
+                                  </span>
                                   {status?.message && (
-                                    <span className="max-w-64 truncate text-xs text-muted-foreground">
+                                    <div
+                                      className="row-subtitle max-w-56 whitespace-normal"
+                                      title={status.message}
+                                    >
                                       {status.message}
-                                    </span>
+                                    </div>
                                   )}
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex justify-end gap-2">
-                                  <Button
-                                    onClick={() =>
-                                      openEditForwardDialog(forward)
-                                    }
-                                    size="sm"
-                                    type="button"
-                                    variant="outline"
-                                  >
-                                    <PencilIcon data-icon="inline-start" />
-                                    Edit
-                                  </Button>
-                                  <Button
-                                    disabled={active}
-                                    onClick={() => startForward(forward.id)}
-                                    size="sm"
-                                    type="button"
-                                    variant="outline"
-                                  >
-                                    <PlayIcon data-icon="inline-start" />
-                                    Start
-                                  </Button>
-                                  {forward.kind === "local" && (
+                                </TableCell>
+                                <TableCell>
+                                  <div className="row-actions">
+                                    {forward.kind === "local" && (
+                                      <Button
+                                        aria-label={`Open ${forward.name} in browser`}
+                                        className="open-forward-action"
+                                        disabled={!active}
+                                        onClick={() =>
+                                          void openForwardInBrowser(
+                                            forward,
+                                            status,
+                                          )
+                                        }
+                                        size="icon-sm"
+                                        title="Open in browser"
+                                        variant="ghost"
+                                      >
+                                        <ExternalLinkIcon />
+                                      </Button>
+                                    )}
                                     <Button
-                                      disabled={!active}
+                                      aria-label={`${active ? "Stop" : "Start"} ${forward.name}`}
+                                      disabled={
+                                        busy === `start-${forward.id}` ||
+                                        busy === `stop-${forward.id}`
+                                      }
                                       onClick={() =>
-                                        openForwardInBrowser(forward, status)
+                                        void (active
+                                          ? stopForward(forward.id)
+                                          : startForward(forward.id))
                                       }
                                       size="sm"
-                                      type="button"
                                       variant="outline"
                                     >
-                                      <ExternalLinkIcon data-icon="inline-start" />
-                                      Open
+                                      {active ? (
+                                        <SquareIcon data-icon="inline-start" />
+                                      ) : (
+                                        <PlayIcon data-icon="inline-start" />
+                                      )}
+                                      {active ? "Stop" : "Start"}
                                     </Button>
-                                  )}
-                                  <Button
-                                    disabled={!active}
-                                    onClick={() => stopForward(forward.id)}
-                                    size="sm"
-                                    type="button"
-                                    variant="outline"
-                                  >
-                                    <SquareIcon data-icon="inline-start" />
-                                    Stop
-                                  </Button>
-                                  <Button
-                                    onClick={() =>
-                                      setPendingDelete({
-                                        kind: "forward",
-                                        id: forward.id,
-                                        name: forward.name,
-                                      })
-                                    }
-                                    size="sm"
-                                    type="button"
-                                    variant="destructive"
-                                  >
-                                    <Trash2Icon data-icon="inline-start" />
-                                    Delete
-                                  </Button>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <Empty className="min-h-44 border">
-                    <EmptyHeader>
-                      <EmptyMedia variant="icon">
-                        <PlugIcon />
-                      </EmptyMedia>
-                      <EmptyTitle>No forwards for this server</EmptyTitle>
-                      <EmptyDescription>
-                        Add a local, remote, or dynamic tunnel for this server.
-                      </EmptyDescription>
-                    </EmptyHeader>
-                    <EmptyContent>
-                      <Button
-                        disabled={!selectedServer}
-                        onClick={openCreateForwardDialog}
-                        variant="outline"
-                      >
-                        <PlusIcon data-icon="inline-start" />
-                        Add forward
-                      </Button>
-                    </EmptyContent>
-                  </Empty>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-start justify-between gap-4">
-                <div>
-                  <CardDescription>Docker</CardDescription>
-                  <CardTitle>Containers</CardTitle>
-                  {selectedDockerCache?.fetchedAt && (
-                    <CardDescription>
-                      Refreshed {formatTime(selectedDockerCache.fetchedAt)}
-                    </CardDescription>
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button
+                                          aria-label={`Actions for ${forward.name}`}
+                                          size="icon-sm"
+                                          title="More actions"
+                                          variant="ghost"
+                                        >
+                                          <EllipsisIcon />
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end">
+                                        {forward.kind === "local" && (
+                                          <DropdownMenuItem
+                                            disabled={!active}
+                                            onSelect={() =>
+                                              void openForwardInBrowser(
+                                                forward,
+                                                status,
+                                              )
+                                            }
+                                          >
+                                            <ExternalLinkIcon />
+                                            Open in browser
+                                          </DropdownMenuItem>
+                                        )}
+                                        <DropdownMenuItem
+                                          onSelect={() =>
+                                            openEditForwardDialog(forward)
+                                          }
+                                        >
+                                          <PencilIcon />
+                                          Edit forward…
+                                        </DropdownMenuItem>
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuItem
+                                          onSelect={() =>
+                                            setPendingDelete({
+                                              kind: "forward",
+                                              id: forward.id,
+                                              name: forward.name,
+                                            })
+                                          }
+                                          variant="destructive"
+                                        >
+                                          <Trash2Icon />
+                                          Delete forward…
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ) : (
+                    <WorkspaceEmpty
+                      description={
+                        search
+                          ? "Try a different name, address, or port."
+                          : "Create a tunnel to reach a service through this server."
+                      }
+                      icon={<ArrowLeftRightIcon />}
+                      onAction={
+                        search
+                          ? () => setWorkspaceQuery("")
+                          : openCreateForwardDialog
+                      }
+                      action={search ? "Clear search" : "New forward"}
+                      title={
+                        search ? "No matching forwards" : "No forwards yet"
+                      }
+                    />
                   )}
-                </div>
-                <Button
-                  disabled={!selectedServer || busy === "refresh-docker"}
-                  onClick={refreshDocker}
-                  variant="outline"
+                </section>
+
+                <section
+                  aria-label="Containers"
+                  className="workspace-section"
+                  hidden={activeSection !== "containers"}
+                  id="workspace-containers"
                 >
-                  <RefreshCwIcon data-icon="inline-start" />
-                  Refresh
-                </Button>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-4">
-                {selectedDockerCache?.containers.length ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Container</TableHead>
-                        <TableHead>Image</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Port</TableHead>
-                        <TableHead className="text-right">Action</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {selectedDockerCache.containers.flatMap((container) => {
-                        if (!container.ports.length) {
-                          return (
-                            <TableRow key={`${container.id}-empty`}>
-                              <TableCell className="font-medium">
-                                {container.name}
-                              </TableCell>
-                              <TableCell className="max-w-72 truncate">
-                                {container.image}
-                              </TableCell>
+                  <div className="workspace-heading">
+                    <div>
+                      <p className="workspace-eyebrow">Docker workspace</p>
+                      <h1>Containers</h1>
+                      <p className="mt-1 text-muted-foreground">
+                        Published ports and live logs, a click away.
+                      </p>
+                    </div>
+                    <Button
+                      disabled={busy === "refresh-docker"}
+                      onClick={() => void refreshDocker()}
+                      variant="outline"
+                    >
+                      <RefreshCwIcon
+                        className={
+                          busy === "refresh-docker" ? "animate-spin" : undefined
+                        }
+                        data-icon="inline-start"
+                      />
+                      {busy === "refresh-docker" ? "Refreshing…" : "Refresh"}
+                    </Button>
+                  </div>
+                  <div className="workspace-summary">
+                    <span className="stat-item">
+                      <span className="stat-value">
+                        {selectedDockerCache?.containers.length ?? 0}
+                      </span>
+                      <span className="stat-label">containers</span>
+                    </span>
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {selectedDockerCache?.fetchedAt
+                        ? `Updated ${formatTime(selectedDockerCache.fetchedAt)}`
+                        : "Not scanned yet"}
+                    </span>
+                  </div>
+                  {selectedDockerCache?.lastError && (
+                    <p
+                      className="rounded-lg bg-destructive/5 px-3 py-2 text-destructive"
+                      role="alert"
+                    >
+                      {selectedDockerCache.lastError}
+                    </p>
+                  )}
+                  <WorkspaceSearch
+                    label="Search containers"
+                    onChange={setWorkspaceQuery}
+                    placeholder="Find a container or port…"
+                    value={workspaceQuery}
+                  />
+                  {visibleContainers.length ? (
+                    <div className="native-table">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Container</TableHead>
+                            <TableHead>Published ports</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead className="text-right">
+                              <span className="sr-only">Actions</span>
+                            </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {visibleContainers.map((container) => (
+                            <TableRow key={container.id}>
                               <TableCell>
-                                <Badge variant="outline">
-                                  {container.status}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-muted-foreground">
-                                No exposed ports
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex justify-end">
-                                  <Button
-                                    disabled={busy === `logs-${container.id}`}
-                                    onClick={() => openContainerLogs(container)}
-                                    size="sm"
-                                    type="button"
-                                    variant="outline"
-                                  >
-                                    <ScrollTextIcon data-icon="inline-start" />
-                                    Logs
-                                  </Button>
+                                <div className="name-cell">
+                                  <span className="flex size-8 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                                    <BoxesIcon className="size-4" />
+                                  </span>
+                                  <div className="min-w-0">
+                                    <span className="font-medium">
+                                      {container.name}
+                                    </span>
+                                    <div
+                                      className="row-subtitle max-w-72 truncate"
+                                      title={container.image}
+                                    >
+                                      {container.image}
+                                    </div>
+                                  </div>
                                 </div>
                               </TableCell>
-                            </TableRow>
-                          );
-                        }
-
-                        return container.ports.map((port) => (
-                          <TableRow
-                            key={`${container.id}-${port.privatePort}-${port.publicPort}-${port.protocol}`}
-                          >
-                            <TableCell className="font-medium">
-                              {container.name}
-                            </TableCell>
-                            <TableCell className="max-w-72 truncate">
-                              {container.image}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant="outline">
-                                {container.status}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex flex-col gap-1">
-                                <span>
-                                  {port.publicPort ?? "-"} {"->"}{" "}
-                                  {port.privatePort}/{port.protocol}
-                                </span>
-                                {port.ip && (
-                                  <span className="text-xs text-muted-foreground">
-                                    {port.ip}
+                              <TableCell>
+                                {container.ports.length ? (
+                                  <div className="flex flex-col gap-2">
+                                    {uniqueDockerPorts(container.ports).map(
+                                      (port) => (
+                                        <div
+                                          className="flex items-center gap-2"
+                                          key={`${port.ip}-${port.privatePort}-${port.publicPort}-${port.protocol}`}
+                                        >
+                                          <span
+                                            className="endpoint"
+                                            title={
+                                              port.ip
+                                                ? `Bind address: ${port.ip}`
+                                                : undefined
+                                            }
+                                          >
+                                            {port.publicPort
+                                              ? `${port.publicPort} → `
+                                              : ""}
+                                            {port.privatePort}/{port.protocol}
+                                          </span>
+                                          {port.ip &&
+                                            port.ip !== "0.0.0.0" &&
+                                            port.ip !== "::" && (
+                                              <span className="endpoint text-[11px] text-muted-foreground">
+                                                {port.ip}
+                                              </span>
+                                            )}
+                                          {!port.publicPort && (
+                                            <span className="text-[11px] text-muted-foreground">
+                                              Not published
+                                            </span>
+                                          )}
+                                          <Button
+                                            aria-label={`Forward ${container.name} port ${port.publicPort ?? port.privatePort}`}
+                                            disabled={!port.publicPort}
+                                            onClick={() =>
+                                              void quickForward(container, port)
+                                            }
+                                            size="icon-sm"
+                                            title="Add local forward"
+                                            variant="ghost"
+                                          >
+                                            <PlusIcon />
+                                          </Button>
+                                        </div>
+                                      ),
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-muted-foreground">
+                                    No exposed ports
                                   </span>
                                 )}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex justify-end gap-2">
+                              </TableCell>
+                              <TableCell>
+                                <span className="status-label">
+                                  <span
+                                    className="status-indicator"
+                                    data-state={
+                                      container.status === "running"
+                                        ? "running"
+                                        : "stopped"
+                                    }
+                                  />
+                                  {container.status}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-right">
                                 <Button
+                                  aria-label={`View logs for ${container.name}`}
                                   disabled={busy === `logs-${container.id}`}
-                                  onClick={() => openContainerLogs(container)}
+                                  onClick={() =>
+                                    void openContainerLogs(container)
+                                  }
                                   size="sm"
-                                  type="button"
-                                  variant="outline"
+                                  variant="ghost"
                                 >
                                   <ScrollTextIcon data-icon="inline-start" />
                                   Logs
                                 </Button>
-                                <Button
-                                  disabled={!port.publicPort}
-                                  onClick={() => quickForward(container, port)}
-                                  size="sm"
-                                  type="button"
-                                  variant="outline"
-                                >
-                                  <PlusIcon data-icon="inline-start" />
-                                  Add
-                                </Button>
-                              </div>
-                            </TableCell>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ) : (
+                    <WorkspaceEmpty
+                      action={search ? "Clear search" : "Refresh containers"}
+                      description={
+                        search
+                          ? "Try a different name, image, or port."
+                          : "Refresh to discover running containers on this server."
+                      }
+                      icon={<BoxesIcon />}
+                      onAction={
+                        search
+                          ? () => setWorkspaceQuery("")
+                          : () => void refreshDocker()
+                      }
+                      title={
+                        search
+                          ? "No matching containers"
+                          : "No containers cached"
+                      }
+                    />
+                  )}
+                </section>
+
+                <div hidden={activeSection !== "ports"} id="workspace-ports">
+                  <OccupiedPortsCard
+                    key={`${selectedServerId}-${selectedServerCacheKey}`}
+                    serverId={selectedServer.id}
+                    serverKey={selectedServerCacheKey ?? undefined}
+                  />
+                </div>
+
+                <section
+                  aria-label="Credentials"
+                  className="workspace-section"
+                  hidden={activeSection !== "credentials"}
+                  id="workspace-credentials"
+                >
+                  <div className="workspace-heading">
+                    <div>
+                      <p className="workspace-eyebrow">Quick access</p>
+                      <h1>Credentials</h1>
+                      <p className="mt-1 text-muted-foreground">
+                        Connection details for your databases and services.
+                      </p>
+                    </div>
+                    <Button onClick={openCreateSecretDialog}>
+                      <PlusIcon data-icon="inline-start" />
+                      New credential
+                    </Button>
+                  </div>
+                  <div className="workspace-summary">
+                    <span className="stat-item">
+                      <span className="stat-value">
+                        {selectedSecrets.length}
+                      </span>
+                      <span className="stat-label">
+                        saved{" "}
+                        {selectedSecrets.length === 1
+                          ? "credential"
+                          : "credentials"}
+                      </span>
+                    </span>
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      Stored locally
+                    </span>
+                  </div>
+                  <WorkspaceSearch
+                    label="Search credentials"
+                    onChange={setWorkspaceQuery}
+                    placeholder="Find a credential…"
+                    value={workspaceQuery}
+                  />
+                  {visibleSecrets.length ? (
+                    <div className="native-table">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Name</TableHead>
+                            <TableHead>Username</TableHead>
+                            <TableHead>Password</TableHead>
+                            <TableHead>URL</TableHead>
+                            <TableHead className="text-right">
+                              <span className="sr-only">Actions</span>
+                            </TableHead>
                           </TableRow>
-                        ));
-                      })}
-                    </TableBody>
-                  </Table>
-                ) : (
-                  <Empty className="min-h-44 border">
-                    <EmptyHeader>
-                      <EmptyMedia variant="icon">
-                        <BoxesIcon />
-                      </EmptyMedia>
-                      <EmptyTitle>No cached containers</EmptyTitle>
-                      <EmptyDescription>
-                        Refresh Docker for the selected server to cache running
-                        containers.
-                      </EmptyDescription>
-                    </EmptyHeader>
-                    <EmptyContent>
-                      <Button
-                        disabled={!selectedServer || busy === "refresh-docker"}
-                        onClick={refreshDocker}
-                        variant="outline"
-                      >
-                        <RefreshCwIcon data-icon="inline-start" />
-                        Refresh Docker
-                      </Button>
-                    </EmptyContent>
-                  </Empty>
-                )}
-              </CardContent>
-            </Card>
+                        </TableHeader>
+                        <TableBody>
+                          {visibleSecrets.map((secret) => (
+                            <TableRow key={secret.id}>
+                              <TableCell>
+                                <span className="font-medium">
+                                  {secret.name}
+                                </span>
+                                {secret.notes && (
+                                  <div
+                                    className="row-subtitle max-w-52 truncate"
+                                    title={secret.notes}
+                                  >
+                                    {secret.notes}
+                                  </div>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <SecretValue
+                                  label="Username"
+                                  onCopy={() =>
+                                    void copySecretValue(
+                                      "Username",
+                                      secret.username,
+                                    )
+                                  }
+                                  value={secret.username}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <SecretValue
+                                  label="Password"
+                                  masked
+                                  onCopy={() =>
+                                    void copySecretValue(
+                                      "Password",
+                                      secret.password,
+                                    )
+                                  }
+                                  value={secret.password}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <SecretValue
+                                  label="URL"
+                                  onCopy={() =>
+                                    void copySecretValue("URL", secret.url)
+                                  }
+                                  value={secret.url}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <div className="row-actions">
+                                  <Button
+                                    aria-label={`Edit ${secret.name}`}
+                                    onClick={() => openEditSecretDialog(secret)}
+                                    size="icon-sm"
+                                    title="Edit credential"
+                                    variant="ghost"
+                                  >
+                                    <PencilIcon />
+                                  </Button>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        aria-label={`Actions for ${secret.name}`}
+                                        size="icon-sm"
+                                        title="More actions"
+                                        variant="ghost"
+                                      >
+                                        <EllipsisIcon />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem
+                                        onSelect={() =>
+                                          setPendingDelete({
+                                            kind: "secret",
+                                            id: secret.id,
+                                            name: secret.name,
+                                          })
+                                        }
+                                        variant="destructive"
+                                      >
+                                        <Trash2Icon />
+                                        Delete credential…
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ) : (
+                    <WorkspaceEmpty
+                      action={search ? "Clear search" : "New credential"}
+                      description={
+                        search
+                          ? "Try a different name, username, or URL."
+                          : "Keep database and service details ready to copy."
+                      }
+                      icon={<KeyRoundIcon />}
+                      onAction={
+                        search
+                          ? () => setWorkspaceQuery("")
+                          : openCreateSecretDialog
+                      }
+                      title={
+                        search
+                          ? "No matching credentials"
+                          : "No credentials yet"
+                      }
+                    />
+                  )}
+                </section>
+              </>
+            )}
           </main>
-        </SidebarInset>
-        <ServerDialog
-          busy={busy}
-          form={serverForm}
-          mode={editingServerId ? "edit" : "create"}
-          onFormChange={setServerForm}
-          onOpenChange={(open) => {
-            setServerDialogOpen(open);
-            if (!open) {
-              setEditingServerId(null);
-              setServerForm(emptyServerForm);
-            }
-          }}
-          onSubmit={saveServer}
-          open={serverDialogOpen}
-        />
-        <ForwardDialog
-          busy={busy}
-          disabled={!selectedServer}
-          form={forwardForm}
-          mode={editingForwardId ? "edit" : "create"}
-          onFormChange={setForwardForm}
-          onOpenChange={(open) => {
-            setForwardDialogOpen(open);
-            if (!open) {
-              setEditingForwardId(null);
-              setForwardForm(emptyForwardForm);
-            }
-          }}
-          onSubmit={saveForward}
-          open={forwardDialogOpen}
-        />
-        <SecretDialog
-          busy={busy}
-          disabled={!selectedServer}
-          form={secretForm}
-          mode={editingSecretId ? "edit" : "create"}
-          onFormChange={setSecretForm}
-          onOpenChange={(open) => {
-            setSecretDialogOpen(open);
-            if (!open) {
-              setEditingSecretId(null);
-              setSecretForm(emptySecretForm);
-            }
-          }}
-          onSubmit={saveSecret}
-          open={secretDialogOpen}
-        />
-        <ConfirmDeleteDialog
-          onConfirm={() => {
-            void confirmPendingDelete();
-          }}
-          onOpenChange={(open) => {
-            if (!open) setPendingDelete(null);
-          }}
-          target={pendingDelete}
-        />
-        <ContainerLogsDialog
-          container={logContainer}
-          error={logError}
-          lines={logLines}
-          onOpenChange={setContainerLogsOpen}
-          open={logDialogOpen}
-          session={logSession}
-        />
-        <Toaster closeButton position="bottom-right" richColors theme="dark" />
-      </SidebarProvider>
+          <footer className="app-statusbar">
+            <span>
+              {selectedServer
+                ? `${selectedForwards.length} forwards · ${activeCount} active`
+                : "Ready when you are"}
+            </span>
+            <span className="ml-auto">
+              {selectedServer
+                ? `SSH · ${selectedServer.host}`
+                : "Local workspace"}
+            </span>
+          </footer>
+        </div>
+      </div>
+      <ServerDialog
+        busy={busy}
+        form={serverForm}
+        mode={editingServerId ? "edit" : "create"}
+        onFormChange={setServerForm}
+        onOpenChange={(open) => {
+          setServerDialogOpen(open);
+          if (!open) {
+            setEditingServerId(null);
+            setServerForm(emptyServerForm);
+          }
+        }}
+        onSubmit={saveServer}
+        open={serverDialogOpen}
+      />
+      <ForwardDialog
+        busy={busy}
+        disabled={!selectedServer}
+        form={forwardForm}
+        mode={editingForwardId ? "edit" : "create"}
+        onFormChange={setForwardForm}
+        onOpenChange={(open) => {
+          setForwardDialogOpen(open);
+          if (!open) {
+            setEditingForwardId(null);
+            setForwardForm(emptyForwardForm);
+          }
+        }}
+        onSubmit={saveForward}
+        open={forwardDialogOpen}
+      />
+      <SecretDialog
+        busy={busy}
+        disabled={!selectedServer}
+        form={secretForm}
+        mode={editingSecretId ? "edit" : "create"}
+        onFormChange={setSecretForm}
+        onOpenChange={(open) => {
+          setSecretDialogOpen(open);
+          if (!open) {
+            setEditingSecretId(null);
+            setSecretForm(emptySecretForm);
+          }
+        }}
+        onSubmit={saveSecret}
+        open={secretDialogOpen}
+      />
+      <ConfirmDeleteDialog
+        onConfirm={() => {
+          void confirmPendingDelete();
+        }}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        target={pendingDelete}
+      />
+      <ContainerLogsDialog
+        container={logContainer}
+        error={logError}
+        lines={logLines}
+        onOpenChange={setContainerLogsOpen}
+        open={logDialogOpen}
+        session={logSession}
+      />
+      <Toaster closeButton position="bottom-right" richColors theme="system" />
     </TooltipProvider>
+  );
+}
+
+function WorkspaceSearch({
+  label,
+  placeholder,
+  value,
+  onChange,
+}: {
+  label: string;
+  placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="relative mb-1 max-w-sm">
+      <SearchIcon
+        aria-hidden="true"
+        className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
+      />
+      <Input
+        aria-label={label}
+        className="pl-8"
+        data-workspace-search
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        type="search"
+        value={value}
+      />
+    </div>
+  );
+}
+
+function WorkspaceEmpty({
+  title,
+  description,
+  icon,
+  action,
+  onAction,
+}: {
+  title: string;
+  description: string;
+  icon: ReactNode;
+  action: string;
+  onAction: () => void;
+}) {
+  return (
+    <Empty className="min-h-72">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">{icon}</EmptyMedia>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>{description}</EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button onClick={onAction} size="sm" variant="outline">
+          {action}
+        </Button>
+      </EmptyContent>
+    </Empty>
   );
 }
 
@@ -2138,7 +2539,7 @@ function SecretDialog({
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>
-            {mode === "edit" ? "Edit secret" : "Add secret"}
+            {mode === "edit" ? "Edit credential" : "New credential"}
           </DialogTitle>
           <DialogDescription>
             Store credentials for database admin tools and related services.
@@ -2220,7 +2621,7 @@ function SecretDialog({
               ) : (
                 <PlusIcon data-icon="inline-start" />
               )}
-              {mode === "edit" ? "Save changes" : "Add secret"}
+              {mode === "edit" ? "Save changes" : "Add credential"}
             </Button>
           </DialogFooter>
         </form>
@@ -2494,14 +2895,14 @@ function secretToForm(secret: SecretConfig): SecretForm {
 function deleteDialogTitle(target: DeleteTarget | null) {
   if (!target) return "Delete item?";
   if (target.kind === "server") return `Delete server "${target.name}"?`;
-  if (target.kind === "secret") return `Delete secret "${target.name}"?`;
+  if (target.kind === "secret") return `Delete credential "${target.name}"?`;
   return `Delete forward "${target.name}"?`;
 }
 
 function deleteDialogDescription(target: DeleteTarget | null) {
   if (!target) return "This action cannot be undone.";
   if (target.kind === "server") {
-    return "This will remove the server, its forwards, Docker cache, and saved secrets. Running tunnels for this server will be stopped.";
+    return "This will remove the server, its forwards, Docker cache, and saved credentials. Running tunnels for this server will be stopped.";
   }
   if (target.kind === "secret") {
     return "This will remove the saved credential from local storage. This action cannot be undone.";
@@ -2563,25 +2964,33 @@ function browserHost(host: string) {
   return host || "127.0.0.1";
 }
 
+function uniqueDockerPorts(ports: DockerPort[]) {
+  const unique = new Map<string, DockerPort>();
+
+  for (const port of ports) {
+    // Docker lists a dual-stack wildcard binding once for each IP family.
+    const host = port.ip === "::" ? "0.0.0.0" : (port.ip ?? "");
+    const key = JSON.stringify([
+      host,
+      port.publicPort,
+      port.privatePort,
+      port.protocol,
+    ]);
+
+    if (!unique.has(key) || port.ip === "0.0.0.0") {
+      unique.set(key, port);
+    }
+  }
+
+  return [...unique.values()];
+}
+
 function formatTime(value: string) {
   return new Intl.DateTimeFormat(undefined, {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
   }).format(new Date(value));
-}
-
-function statusVariant(state?: RuntimeState) {
-  if (state === "failed") return "destructive";
-  if (state === "running") return "default";
-  if (
-    state === "starting" ||
-    state === "reconnecting" ||
-    state === "stopping"
-  ) {
-    return "secondary";
-  }
-  return "outline";
 }
 
 function isForwardActive(state?: RuntimeState) {

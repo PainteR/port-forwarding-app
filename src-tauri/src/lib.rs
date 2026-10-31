@@ -2,6 +2,7 @@ mod commands;
 mod dock;
 mod docker_logs;
 mod models;
+mod occupied_ports;
 mod ssh;
 mod storage;
 mod tunnel;
@@ -33,6 +34,7 @@ pub fn run() {
             commands::list_secrets,
             commands::list_servers,
             commands::refresh_docker_containers,
+            commands::refresh_occupied_ports,
             commands::save_forward,
             commands::save_secret,
             commands::save_server,

@@ -5,9 +5,9 @@ use crate::{
     dock, docker_logs,
     models::{
         docker_cache_key, DockerCache, DockerLogSession, ForwardConfig, ForwardRuntimeStatus,
-        ForwardSource, SecretConfig, ServerConfig,
+        ForwardSource, OccupiedPortsSnapshot, SecretConfig, ServerConfig,
     },
-    ssh,
+    occupied_ports, ssh,
     storage::AppState,
 };
 
@@ -232,6 +232,17 @@ pub fn list_forward_statuses(
     let statuses = state.tunnels.statuses()?;
     dock::update_active_forward_badge(&app, &statuses);
     Ok(statuses)
+}
+
+#[tauri::command]
+pub async fn refresh_occupied_ports(
+    state: State<'_, AppState>,
+    server_id: String,
+) -> Result<OccupiedPortsSnapshot, String> {
+    let server = find_server(&state, &server_id)?;
+    tauri::async_runtime::spawn_blocking(move || occupied_ports::fetch(&server))
+        .await
+        .map_err(|error| format!("Failed to scan occupied ports: {error}"))?
 }
 
 #[tauri::command]

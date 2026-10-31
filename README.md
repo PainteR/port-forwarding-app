@@ -9,10 +9,12 @@ A desktop SSH tunnel manager built with Tauri, React, and Rust. The app keeps SS
 - Runtime tunnel states: `starting`, `running`, `reconnecting`, `stopping`, `stopped`, `failed`.
 - Automatic fallback for local and dynamic ports: if the requested port is busy, the app tries a free port from `50000-58000` and shows the actual runtime bind.
 - Docker discovery for the selected server via `docker ps` and `docker inspect`.
+- Occupied server ports with TCP/UDP filters, process and container details, and port search.
 - Quick local forward creation for published Docker ports.
 - `docker logs` viewing with an initial tail and live follow.
 - Local storage for servers, forwards, Docker cache, and credential notes.
 - macOS Dock badge with the number of active tunnels.
+- A compact macOS-style workspace with system light/dark appearance, searchable sections, and keyboard shortcuts.
 
 ## Tech Stack
 
@@ -63,9 +65,23 @@ After `yarn tauri build`, build artifacts are written under `src-tauri/target/re
 
 1. Add a server profile with `Add server`: host, port, username, and authentication method.
 2. Verify the profile with `Test connection`.
-3. Add a tunnel in the `Forwards` section.
+3. Select `Forwards` in the sidebar and choose `New forward`.
 4. Start it with `Start`.
-5. For a local forward, use `Open` to open `http://<bindHost>:<bindPort>` in the browser.
+5. For a local forward, use the `Open in browser` icon to open `http://<bindHost>:<bindPort>`.
+
+Use the sidebar to switch between Forwards, Containers, Ports, and Credentials for the selected server. Server actions are available from each server's More menu. Docker containers appear once, with their published ports grouped in the same row.
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `⌘1`–`⌘4` | Switch workspace section |
+| `⌘N` | New forward, or new credential in Credentials |
+| `⇧⌘N` | Add server |
+| `⌘F` | Focus the current section's search field |
+| `⌘B` | Show or hide the sidebar |
+
+Shortcuts also accept Ctrl on other platforms and are suspended while a dialog is open. The interface follows the system's light/dark appearance, reduced-motion, transparency, and contrast preferences.
 
 ### Forward Types
 
@@ -97,9 +113,17 @@ Supports SOCKS5 `CONNECT` requests without authentication.
 
 The `Autostart` flag currently starts a forward immediately after saving it. Saved forwards are not automatically started when the app launches.
 
+## Occupied Ports
+
+Use **Scan ports** in the **Ports** section for the selected server before choosing a port for a new service. The scan reads TCP listeners and bound UDP sockets through Linux `ss` (from `iproute2`), then adds current Docker published ports, including NAT bindings without a listening `docker-proxy` socket.
+
+Each port and protocol appears once, with its IPv4/IPv6 bind addresses, available process names/PIDs, and container names. Search by a port number for an exact match, or by address, process, or container; use the protocol filter to distinguish TCP from UDP.
+
+Results are a timestamped snapshot. Refresh before deployment: a missing binding does not reserve or guarantee availability of that port. Missing tools, Docker access failures, and unavailable process details are reported in the block. Scans use the configured SSH user without requesting elevated privileges and are not persisted.
+
 ## Docker
 
-The `Refresh` button in the `Docker` section connects to the selected server and runs:
+The `Refresh` button in the `Containers` section connects to the selected server and runs:
 
 ```bash
 docker ps -q

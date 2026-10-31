@@ -106,6 +106,26 @@ pub struct DockerCache {
     pub last_error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OccupiedPort {
+    pub port: u16,
+    pub protocol: String,
+    pub addresses: Vec<String>,
+    pub processes: Vec<String>,
+    pub containers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OccupiedPortsSnapshot {
+    pub server_id: String,
+    pub server_key: String,
+    pub fetched_at: String,
+    pub ports: Vec<OccupiedPort>,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DockerLogSession {

@@ -100,10 +100,12 @@ pub fn fetch_docker_containers(server: &ServerConfig) -> DockerCache {
     }
 }
 
-fn fetch_docker_containers_result(server: &ServerConfig) -> Result<Vec<DockerContainer>, String> {
+pub(crate) fn fetch_docker_containers_result(
+    server: &ServerConfig,
+) -> Result<Vec<DockerContainer>, String> {
     let ids_output = exec(
         server,
-        "command -v docker >/dev/null 2>&1 && docker ps -q || true",
+        "if ! command -v docker >/dev/null 2>&1; then printf '%s\\n' 'Docker is not installed or not in PATH' >&2; exit 127; fi; docker ps -q",
     )?;
 
     if ids_output.exit_status != 0 {

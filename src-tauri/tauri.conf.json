@@ -14,8 +14,8 @@
     "windows": [
       {
         "title": "Port Forward",
-        "width": 1600,
-        "height": 1020,
+        "width": 1280,
+        "height": 840,
         "minWidth": 980,
         "minHeight": 680,
         "decorations": true,
@@ -24,8 +24,7 @@
         "trafficLightPosition": {
           "x": 16,
           "y": 20
-        },
-        "theme": "Dark"
+        }
       }
     ],
     "security": {
