@@ -1,0 +1,100 @@
+.workspace-content[data-terminal="true"] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#workspace-terminal:not([hidden]) {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.ssh-workspace {
+  flex: 1;
+  min-height: 0;
+}
+.ssh-workspace > .workspace-heading {
+  flex-shrink: 0;
+}
+.ssh-terminal-frame {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 200px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fbfbfc;
+}
+.dark .ssh-terminal-frame {
+  background: #15171b;
+}
+.ssh-terminal-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 9px;
+  min-height: 37px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.ssh-terminal-status {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-family: var(--font-sans);
+  font-size: 10px;
+}
+.ssh-terminal-status > span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+}
+.ssh-terminal-status[data-connected="true"] > span {
+  background: var(--success);
+}
+.ssh-terminal-surface {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  padding: 14px;
+}
+.ssh-terminal-host {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.ssh-terminal-host .xterm {
+  height: 100%;
+}
+.ssh-terminal-host .xterm-viewport {
+  background-color: transparent !important;
+  scrollbar-width: thin;
+}
+.ssh-terminal-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.ssh-terminal-error {
+  flex-shrink: 0;
+  overflow-wrap: anywhere;
+  color: var(--destructive);
+  font-size: 12px;
+}
+.ssh-terminal-help {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 1.6;
+}

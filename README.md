@@ -5,6 +5,7 @@ A desktop SSH tunnel manager built with Tauri, React, and Rust. The app keeps SS
 ## Features
 
 - SSH profiles with SSH agent, private key file, or password authentication.
+- Interactive SSH terminal with a remote PTY, ANSI colors, terminal resizing, and bounded streaming output.
 - Manual tunnel configurations for `-L`, `-R`, and `-D`.
 - Runtime tunnel states: `starting`, `running`, `reconnecting`, `stopping`, `stopped`, `failed`.
 - Automatic fallback for local and dynamic ports: if the requested port is busy, the app tries a free port from `50000-58000` and shows the actual runtime bind.
@@ -82,19 +83,33 @@ After `yarn tauri build`, build artifacts are written under `src-tauri/target/re
 4. Start it with `Start`.
 5. For a local forward, use the `Open in browser` icon to open `http://<bindHost>:<bindPort>`.
 
-Use the sidebar to switch between Forwards, Containers, Ports, Credentials, and Nginx for the selected server. Server actions are available from each server's More menu. Docker containers appear once, with their published ports grouped in the same row.
+Use the sidebar to switch between Forwards, Containers, Ports, Credentials, Nginx, and Terminal for the selected server. Server actions are available from each server's More menu. Docker containers appear once, with their published ports grouped in the same row.
 
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| `⌘1`–`⌘5` | Switch workspace section |
+| `⌘1`–`⌘6` | Switch workspace section |
 | `⌘N` | New forward, credential, or Nginx domain in the current section |
 | `⇧⌘N` | Add server |
 | `⌘F` | Focus the current section's search field |
 | `⌘B` | Show or hide the sidebar |
 
 Shortcuts also accept Ctrl on other platforms and are suspended while a dialog is open. The interface follows the system's light/dark appearance, reduced-motion, transparency, and contrast preferences.
+
+## SSH Terminal
+
+Open **Terminal** (`⌘6`) and choose **Connect** to start an interactive shell using the selected server's saved authentication and existing host-key checks. The terminal uses `@xterm/xterm` with `@xterm/addon-fit`; Rust requests an `xterm-256color` PTY through the existing `ssh2` transport. Ordered Tauri Channels carry raw output bytes, and acknowledgements after terminal parsing limit buffered output. No additional WebSocket server or remote software is required.
+
+Arrow keys, ANSI colors, Ctrl+C, Ctrl+D, shell prompts, and full-screen terminal applications use the remote PTY. The remote terminal size follows the workspace. Copy and paste use `⌘C` / `⌘V` on macOS and `Ctrl+Shift+C` / `Ctrl+Shift+V` elsewhere; Ctrl+C is sent to the remote shell. **Clear** clears scrollback. **Disconnect** closes the SSH session, and **Reconnect** starts a new shell without replaying previous input.
+
+Switching workspace sections keeps the shell open. Selecting another server, editing its connection settings, deleting it, or quitting the app closes the session. Terminal output and typed input are not saved by the app; the remote shell may maintain its own history. The browser-only Vite preview cannot open SSH sessions.
+
+Terminal input checks:
+
+```bash
+yarn test:terminal
+```
 
 ### Forward Types
 
@@ -211,6 +226,7 @@ src-tauri/
     ssh.rs             SSH connection, auth, Docker discovery
     tunnel.rs          Local, remote and dynamic forwarding runtime
     docker_logs.rs     Docker log sessions and event emission
+    terminal.rs        Interactive SSH PTY sessions and bounded terminal I/O
     nginx.rs           Nginx commands and SSH transport for site management
     nginx_remote.py    Remote Nginx transactions, backups, Certbot workflow
     storage.rs         state.json persistence

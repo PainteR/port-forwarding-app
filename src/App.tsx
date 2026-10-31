@@ -21,9 +21,12 @@ import {
   SearchIcon,
   ServerIcon,
   SquareIcon,
+  TerminalIcon,
   Trash2Icon,
 } from "lucide-react";
 import {
+  lazy,
+  Suspense,
   useEffect,
   useMemo,
   useRef,
@@ -96,6 +99,8 @@ import { Switch } from "@/components/ui/switch";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+
+const SshTerminal = lazy(() => import("@/components/ssh-terminal").then((module) => ({ default: module.SshTerminal })));
 
 type AuthConfig =
   | { method: "agent" }
@@ -256,7 +261,8 @@ type WorkspaceSection =
   | "containers"
   | "ports"
   | "credentials"
-  | "nginx";
+  | "nginx"
+  | "terminal";
 
 const workspaceSections = [
   { id: "forwards", label: "Forwards", icon: ArrowLeftRightIcon },
@@ -264,6 +270,7 @@ const workspaceSections = [
   { id: "ports", label: "Ports", icon: NetworkIcon },
   { id: "credentials", label: "Credentials", icon: KeyRoundIcon },
   { id: "nginx", label: "Nginx", icon: GlobeIcon },
+  { id: "terminal", label: "Terminal", icon: TerminalIcon },
 ] as const;
 
 type AnsiTextStyle = Pick<
@@ -313,6 +320,8 @@ function App() {
   const [workspaceQuery, setWorkspaceQuery] = useState("");
   const [nginxNewRequest, setNginxNewRequest] = useState(0);
   const [nginxBusy, setNginxBusy] = useState(false);
+  const [terminalRevision, setTerminalRevision] = useState(0);
+  const [terminalOpened, setTerminalOpened] = useState(false);
   const [servers, setServers] = useState<ServerConfig[]>([]);
   const [secrets, setSecrets] = useState<SecretConfig[]>([]);
   const [forwards, setForwards] = useState<ForwardConfig[]>([]);
@@ -428,13 +437,18 @@ function App() {
 
   useEffect(() => {
     setWorkspaceQuery("");
+    if (activeSection === "terminal") setTerminalOpened(true);
   }, [activeSection, selectedServerId]);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.repeat)
         return;
       if (document.querySelector('[role="dialog"], [role="alertdialog"]'))
+        return;
+      // Ctrl shortcuts belong to the remote shell while its input has focus.
+      if (event.ctrlKey && !event.metaKey && event.target instanceof Element && event.target.closest(".xterm"))
         return;
 
       const sectionIndex = [
@@ -443,6 +457,7 @@ function App() {
         "Digit3",
         "Digit4",
         "Digit5",
+        "Digit6",
       ].indexOf(event.code);
       if (sectionIndex >= 0) {
         event.preventDefault();
@@ -466,6 +481,7 @@ function App() {
         else if (activeSection === "credentials") openCreateSecretDialog();
         else if (activeSection === "nginx")
           setNginxNewRequest((request) => request + 1);
+        else if (activeSection === "terminal") return;
         else openCreateForwardDialog();
       }
     };
@@ -676,6 +692,7 @@ function App() {
     if (!result.ok) return;
     const saved = result.value;
 
+    setTerminalRevision((revision) => revision + 1);
     setServerForm(emptyServerForm);
     setEditingServerId(null);
     setServerDialogOpen(false);
@@ -1307,7 +1324,7 @@ function App() {
             )}
           </header>
 
-          <main className="workspace-content">
+          <main className="workspace-content" data-terminal={activeSection === "terminal" && !!selectedServer}>
             {!selectedServer ? (
               <div className="empty-workspace">
                 <div className="mb-5 flex size-14 items-center justify-center rounded-2xl bg-muted">
@@ -1954,6 +1971,18 @@ function App() {
                     newRequest={nginxNewRequest}
                     onMutatingChange={setNginxBusy}
                   />
+                </div>
+                <div hidden={activeSection !== "terminal"} id="workspace-terminal">
+                  {(terminalOpened || activeSection === "terminal") && (
+                    <Suspense fallback={<p className="text-xs text-muted-foreground" role="status">Loading terminal…</p>}>
+                      <SshTerminal
+                        key={`${selectedServer.id}-${selectedServerCacheKey}-${terminalRevision}`}
+                        serverId={selectedServer.id}
+                        endpoint={`${selectedServer.username}@${selectedServer.host}:${selectedServer.port}`}
+                        active={activeSection === "terminal"}
+                      />
+                    </Suspense>
+                  )}
                 </div>
               </>
             )}

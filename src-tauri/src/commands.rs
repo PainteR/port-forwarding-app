@@ -9,6 +9,7 @@ use crate::{
     },
     occupied_ports, ssh,
     storage::AppState,
+    terminal::TerminalEvent,
 };
 
 #[tauri::command]
@@ -31,13 +32,15 @@ pub fn save_server(
         server.port = 22;
     }
 
-    state.update(|store| {
+    let (saved, replaced) = state.update(|store| {
         let next_cache_key = docker_cache_key(&server);
-        let cache_key_changed = store
+        let existing = store
             .servers
             .iter()
-            .find(|existing| existing.id == server.id)
-            .is_some_and(|existing| docker_cache_key(existing) != next_cache_key);
+            .find(|existing| existing.id == server.id);
+        let replaced = existing.is_some();
+        let cache_key_changed =
+            existing.is_some_and(|existing| docker_cache_key(existing) != next_cache_key);
 
         if cache_key_changed {
             store
@@ -46,8 +49,12 @@ pub fn save_server(
         }
 
         upsert(&mut store.servers, server.clone(), |item| &item.id);
-        server
-    })
+        (server, replaced)
+    })?;
+    if replaced {
+        state.terminals.close_for_server(&saved.id);
+    }
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -65,6 +72,7 @@ pub fn delete_server(app: AppHandle, state: State<AppState>, id: String) -> Resu
         let _ = state.tunnels.stop(&forward_id);
     }
     let _ = state.docker_logs.stop_sessions_for_server(&id);
+    state.terminals.close_for_server(&id);
 
     state.update(|store| {
         store.servers.retain(|server| server.id != id);
@@ -307,6 +315,54 @@ pub fn start_container_logs(
 #[tauri::command]
 pub fn stop_container_logs(state: State<AppState>, session_id: String) -> Result<(), String> {
     state.docker_logs.stop(&session_id)
+}
+
+#[tauri::command]
+pub fn terminal_open(
+    state: State<AppState>,
+    server_id: String,
+    session_id: String,
+    cols: u32,
+    rows: u32,
+    on_event: tauri::ipc::Channel<TerminalEvent>,
+) -> Result<(), String> {
+    let server = find_server(&state, &server_id)?;
+    state
+        .terminals
+        .open(server, session_id, cols, rows, on_event)
+}
+
+#[tauri::command]
+pub fn terminal_write(
+    state: State<AppState>,
+    session_id: String,
+    data: Vec<u8>,
+) -> Result<(), String> {
+    state.terminals.write(&session_id, data)
+}
+
+#[tauri::command]
+pub fn terminal_resize(
+    state: State<AppState>,
+    session_id: String,
+    cols: u32,
+    rows: u32,
+) -> Result<(), String> {
+    state.terminals.resize(&session_id, cols, rows)
+}
+
+#[tauri::command]
+pub fn terminal_ack(
+    state: State<AppState>,
+    session_id: String,
+    bytes: usize,
+) -> Result<(), String> {
+    state.terminals.acknowledge(&session_id, bytes)
+}
+
+#[tauri::command]
+pub fn terminal_close(state: State<AppState>, session_id: String) -> Result<(), String> {
+    state.terminals.close(&session_id)
 }
 
 fn sync_dock_badge(app: &AppHandle, state: &State<AppState>) {

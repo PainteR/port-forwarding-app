@@ -6,6 +6,7 @@ mod nginx;
 mod occupied_ports;
 mod ssh;
 mod storage;
+mod terminal;
 mod tunnel;
 
 use storage::AppState;
@@ -19,6 +20,15 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_mcp_bridge::init());
 
     builder
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Started)
+            {
+                if let Some(state) = webview.try_state::<AppState>() {
+                    state.terminals.close_all();
+                }
+            }
+        })
         .setup(|app| {
             let state = AppState::load(app.handle())?;
             app.manage(state);
@@ -44,6 +54,11 @@ pub fn run() {
             commands::stop_container_logs,
             commands::stop_forward,
             commands::test_connection,
+            commands::terminal_open,
+            commands::terminal_write,
+            commands::terminal_resize,
+            commands::terminal_ack,
+            commands::terminal_close,
             nginx::list_nginx_sites,
             nginx::read_nginx_site,
             nginx::save_nginx_site,
@@ -52,6 +67,11 @@ pub fn run() {
             nginx::reload_nginx_configuration,
             nginx::provision_nginx_site,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<AppState>().terminals.close_all();
+            }
+        });
 }
