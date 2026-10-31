@@ -4,6 +4,9 @@ mod docker_logs;
 mod models;
 mod nginx;
 mod occupied_ports;
+mod sftp;
+mod sftp_archive;
+mod sftp_rename;
 mod ssh;
 mod storage;
 mod terminal;
@@ -26,6 +29,7 @@ pub fn run() {
             {
                 if let Some(state) = webview.try_state::<AppState>() {
                     state.terminals.close_all();
+                    state.transfers.cancel_all();
                 }
             }
         })
@@ -36,6 +40,15 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            sftp::sftp_list,
+            sftp::sftp_mkdir,
+            sftp::sftp_rename,
+            sftp::sftp_delete,
+            sftp::sftp_chmod,
+            sftp::sftp_read_text,
+            sftp::sftp_write_text,
+            sftp::sftp_transfer,
+            sftp::sftp_cancel,
             commands::delete_forward,
             commands::delete_secret,
             commands::delete_server,
@@ -72,6 +85,7 @@ pub fn run() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 app.state::<AppState>().terminals.close_all();
+                app.state::<AppState>().transfers.cancel_all();
             }
         });
 }

@@ -387,6 +387,10 @@ fn authenticate(session: &Session, server: &ServerConfig) -> Result<(), String> 
 }
 
 fn known_hosts_path() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = env::var_os("SFTP_TEST_KNOWN_HOSTS") {
+        return Some(PathBuf::from(path));
+    }
     env::var_os("HOME")
         .map(PathBuf::from)
         .map(|home| home.join(".ssh").join("known_hosts"))

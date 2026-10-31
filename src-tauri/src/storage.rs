@@ -17,6 +17,7 @@ pub struct AppState {
     pub tunnels: TunnelManager,
     pub docker_logs: DockerLogManager,
     pub terminals: TerminalManager,
+    pub transfers: crate::sftp::TransferManager,
 }
 
 impl AppState {
@@ -41,6 +42,7 @@ impl AppState {
             tunnels: TunnelManager::default(),
             docker_logs: DockerLogManager::default(),
             terminals: TerminalManager::default(),
+            transfers: crate::sftp::TransferManager::default(),
         })
     }
 

@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test:terminal": "node --test tests/terminal-input.test.mjs",
+    "test:sftp": "node --test tests/sftp.test.mjs",
     "test:nginx": "node --test tests/nginx-template.test.mjs",
     "test:nginx:remote": "python3 -B -m unittest discover -s src-tauri/tests -p test_nginx_remote.py",
     "test:nginx:config": "node tests/nginx-config-docker.mjs",

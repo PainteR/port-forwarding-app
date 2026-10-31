@@ -6,6 +6,7 @@ A desktop SSH tunnel manager built with Tauri, React, and Rust. The app keeps SS
 
 - SSH profiles with SSH agent, private key file, or password authentication.
 - Interactive SSH terminal with a remote PTY, ANSI colors, terminal resizing, and bounded streaming output.
+- Two-pane local/SFTP file manager with recursive transfers, a cancellable queue, text editing, and optional streaming tar/gzip over SSH.
 - Manual tunnel configurations for `-L`, `-R`, and `-D`.
 - Runtime tunnel states: `starting`, `running`, `reconnecting`, `stopping`, `stopped`, `failed`.
 - Automatic fallback for local and dynamic ports: if the requested port is busy, the app tries a free port from `50000-58000` and shows the actual runtime bind.
@@ -83,13 +84,13 @@ After `yarn tauri build`, build artifacts are written under `src-tauri/target/re
 4. Start it with `Start`.
 5. For a local forward, use the `Open in browser` icon to open `http://<bindHost>:<bindPort>`.
 
-Use the sidebar to switch between Forwards, Containers, Ports, Credentials, Nginx, and Terminal for the selected server. Server actions are available from each server's More menu. Docker containers appear once, with their published ports grouped in the same row.
+Use the sidebar to switch between Forwards, Containers, Ports, Credentials, Nginx, Terminal, and Files for the selected server. Server actions are available from each server's More menu. Docker containers appear once, with their published ports grouped in the same row.
 
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| `⌘1`–`⌘6` | Switch workspace section |
+| `⌘1`–`⌘7` | Switch workspace section |
 | `⌘N` | New forward, credential, or Nginx domain in the current section |
 | `⇧⌘N` | Add server |
 | `⌘F` | Focus the current section's search field |
@@ -140,6 +141,34 @@ Supports SOCKS5 `CONNECT` requests without authentication.
 ### Autostart
 
 The `Autostart` flag currently starts a forward immediately after saving it. Saved forwards are not automatically started when the app launches.
+
+## SFTP Files
+
+Open **Files** (`⌘7`) to browse this computer and the selected SSH server side by side. The remote pane uses SFTP with the profile's existing authentication and host-key verification. Enter an absolute path or use the parent/home buttons, filter filenames, and enable **Hidden files** when needed. Click an entry to select it; double-click a folder or press Enter to open it. Checkboxes and Cmd/Ctrl-click select multiple entries. **Upload** and **Download** copy the selection into the opposite pane's current directory, keeping each selected entry's name. You can also drag files or folders to the opposite pane or onto a folder inside it; dragging a selected entry copies the whole selection using the current transfer mode and replacement setting.
+
+Each pane supports creating folders, renaming, confirmed recursive deletion, octal permissions, and editing UTF-8 text files up to 2 MiB. Saving checks the file revision to reject changes made since the file was opened. File writes use temporary files and atomic publication. Symlinks are visible and can be renamed or deleted, but transfers do not follow them; special files are unsupported. Regular permissions and modification times are retained without copying ownership or special permission bits.
+
+Transfers run sequentially in an in-memory queue with byte counts, speed, errors, and cancellation. Changing the selected server, editing its connection profile, reloading the UI, or quitting cancels its transfers. Switching workspace sections keeps them running. There is no automatic retry or resume. Completed files remain when a later file fails or a transfer is cancelled; an incomplete file does not replace its destination. The queue is not saved between launches.
+
+Existing destinations are refused by default. Enable **Replace existing files** explicitly to replace regular files. Remote replacement, including saving an edited remote text file, requires the server's `posix-rename@openssh.com` extension; unsupported servers fail without deleting the destination. SFTP can also merge into an existing directory with replacement enabled; existing unrelated entries are retained. Archive mode refuses an existing destination directory, including when replacement is enabled. A transfer containing several selected entries can publish some complete entries before a later publication fails.
+
+**Transfer mode → Archive · gzip over SSH** implements a streamed equivalent of `tar | ssh | tar` in both directions. It packs and compresses while sending, then decompresses and extracts at the destination. No archive file is created. The server must provide `tar` with gzip support and permit an SSH command channel; an SFTP-only account can use the ordinary SFTP mode. The app does not install server packages or fall back after a partially executed transfer.
+
+Archive mode can help with many small files and compressible data, but its performance depends on CPU, network latency, and content. It uses gzip rather than bzip2, with fast compression on uploads. Already compressed files may gain little. Its progress counts compressed network bytes and has no known total or percentage. Extraction uses a private hidden staging directory on the destination filesystem, so free space is required for the extracted data before publication. Interrupted staging is removed on a best-effort basis; if cleanup fails, the error includes its `.port-forward-*` path. Archive download rejects unsafe paths, symlinks, and special entries; regular hard links inside the selected roots are accepted.
+
+Frontend helper checks:
+
+```bash
+node --test tests/sftp.test.mjs
+```
+
+Opt-in real SSH/SFTP tests create an ephemeral loopback-only `sshd`, temporary host/user keys, pinned fixture `known_hosts`, and test data. They verify both transfer modes in both directions, byte equality, empty entries, restrictive directory permissions, conflicts, file actions, and cancellation. They never use saved application profiles or personal SSH key files. The fixture stops its daemon and removes its keys when finished. OpenSSH `sshd`, `ssh-keygen`, Python 3, and Cargo are required; macOS may require running the command outside a restricted process sandbox.
+
+```bash
+python3 src-tauri/tests/run_sftp_loopback.py
+```
+
+These tests are ignored by the default `cargo test` run and must be requested through the fixture runner.
 
 ## Occupied Ports
 
@@ -227,6 +256,9 @@ src-tauri/
     tunnel.rs          Local, remote and dynamic forwarding runtime
     docker_logs.rs     Docker log sessions and event emission
     terminal.rs        Interactive SSH PTY sessions and bounded terminal I/O
+    sftp.rs            Local/SFTP file actions, recursive transfers, cancellation
+    sftp_archive.rs    Streamed tar/gzip SSH transport and safe staged extraction
+    sftp_rename.rs     Bounded OpenSSH atomic rename extension helper
     nginx.rs           Nginx commands and SSH transport for site management
     nginx_remote.py    Remote Nginx transactions, backups, Certbot workflow
     storage.rs         state.json persistence

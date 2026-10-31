@@ -53,6 +53,7 @@ pub fn save_server(
     })?;
     if replaced {
         state.terminals.close_for_server(&saved.id);
+        state.transfers.cancel_for_server(&saved.id);
     }
     Ok(saved)
 }
@@ -81,6 +82,7 @@ pub fn delete_server(app: AppHandle, state: State<AppState>, id: String) -> Resu
         store.secrets.retain(|secret| secret.server_id != id);
     })?;
 
+    state.transfers.cancel_for_server(&id);
     sync_dock_badge(&app, &state);
     Ok(())
 }

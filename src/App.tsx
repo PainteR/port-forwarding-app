@@ -9,6 +9,7 @@ import {
   CopyIcon,
   EllipsisIcon,
   ExternalLinkIcon,
+  FolderIcon,
   GlobeIcon,
   KeyRoundIcon,
   NetworkIcon,
@@ -101,6 +102,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 const SshTerminal = lazy(() => import("@/components/ssh-terminal").then((module) => ({ default: module.SshTerminal })));
+const SftpWorkspace = lazy(() => import("@/components/sftp-workspace").then((module) => ({ default: module.SftpWorkspace })));
 
 type AuthConfig =
   | { method: "agent" }
@@ -262,7 +264,8 @@ type WorkspaceSection =
   | "ports"
   | "credentials"
   | "nginx"
-  | "terminal";
+  | "terminal"
+  | "files";
 
 const workspaceSections = [
   { id: "forwards", label: "Forwards", icon: ArrowLeftRightIcon },
@@ -271,6 +274,7 @@ const workspaceSections = [
   { id: "credentials", label: "Credentials", icon: KeyRoundIcon },
   { id: "nginx", label: "Nginx", icon: GlobeIcon },
   { id: "terminal", label: "Terminal", icon: TerminalIcon },
+  { id: "files", label: "Files", icon: FolderIcon },
 ] as const;
 
 type AnsiTextStyle = Pick<
@@ -322,6 +326,7 @@ function App() {
   const [nginxBusy, setNginxBusy] = useState(false);
   const [terminalRevision, setTerminalRevision] = useState(0);
   const [terminalOpened, setTerminalOpened] = useState(false);
+  const [filesOpened, setFilesOpened] = useState(false);
   const [servers, setServers] = useState<ServerConfig[]>([]);
   const [secrets, setSecrets] = useState<SecretConfig[]>([]);
   const [forwards, setForwards] = useState<ForwardConfig[]>([]);
@@ -438,6 +443,7 @@ function App() {
   useEffect(() => {
     setWorkspaceQuery("");
     if (activeSection === "terminal") setTerminalOpened(true);
+    if (activeSection === "files") setFilesOpened(true);
   }, [activeSection, selectedServerId]);
 
   useEffect(() => {
@@ -458,6 +464,7 @@ function App() {
         "Digit4",
         "Digit5",
         "Digit6",
+        "Digit7",
       ].indexOf(event.code);
       if (sectionIndex >= 0) {
         event.preventDefault();
@@ -481,7 +488,7 @@ function App() {
         else if (activeSection === "credentials") openCreateSecretDialog();
         else if (activeSection === "nginx")
           setNginxNewRequest((request) => request + 1);
-        else if (activeSection === "terminal") return;
+        else if (activeSection === "terminal" || activeSection === "files") return;
         else openCreateForwardDialog();
       }
     };
@@ -1075,7 +1082,7 @@ function App() {
 
   return (
     <TooltipProvider>
-      <div className="app-shell" data-sidebar={sidebarOpen ? "open" : "closed"}>
+      <div className="app-shell" data-sidebar={sidebarOpen ? "open" : "closed"} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "none"; }} onDrop={(event) => event.preventDefault()}>
         <aside
           aria-label="Server navigation"
           className="app-sidebar"
@@ -1324,7 +1331,7 @@ function App() {
             )}
           </header>
 
-          <main className="workspace-content" data-terminal={activeSection === "terminal" && !!selectedServer}>
+          <main className="workspace-content" data-terminal={activeSection === "terminal" && !!selectedServer} data-files={activeSection === "files" && !!selectedServer}>
             {!selectedServer ? (
               <div className="empty-workspace">
                 <div className="mb-5 flex size-14 items-center justify-center rounded-2xl bg-muted">
@@ -1980,6 +1987,18 @@ function App() {
                         serverId={selectedServer.id}
                         endpoint={`${selectedServer.username}@${selectedServer.host}:${selectedServer.port}`}
                         active={activeSection === "terminal"}
+                      />
+                    </Suspense>
+                  )}
+                </div>
+                <div hidden={activeSection !== "files"} id="workspace-files">
+                  {(filesOpened || activeSection === "files") && (
+                    <Suspense fallback={<p className="text-xs text-muted-foreground" role="status">Loading files…</p>}>
+                      <SftpWorkspace
+                        key={`${selectedServer.id}-${selectedServerCacheKey}-${terminalRevision}`}
+                        serverId={selectedServer.id}
+                        serverName={selectedServer.name}
+                        active={activeSection === "files"}
                       />
                     </Suspense>
                   )}
