@@ -55,7 +55,9 @@ jobs:
       - name: Test frontend helpers
         run: node --test tests/terminal-input.test.mjs tests/sftp.test.mjs tests/nginx-template.test.mjs
       - name: Build Windows installer
-        run: yarn tauri build --ci -- --locked
+        # Yarn Classic consumes the separator and drops Tauri's flags here.
+        # Call the installed CLI directly so --locked reaches Cargo.
+        run: node node_modules/@tauri-apps/cli/tauri.js build --ci -- --locked
       - name: Upload Windows installer
         id: installer
         uses: actions/upload-artifact@v7

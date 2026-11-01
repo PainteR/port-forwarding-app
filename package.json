@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:windows": "node scripts/build-windows.mjs",
     "test:terminal": "node --test tests/terminal-input.test.mjs",
     "test:sftp": "node --test tests/sftp.test.mjs",
     "test:nginx": "node --test tests/nginx-template.test.mjs",

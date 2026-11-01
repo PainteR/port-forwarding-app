@@ -71,6 +71,9 @@ yarn tauri dev
 # Production bundle
 yarn tauri build
 
+# Windows x64 installer from macOS
+yarn build:windows
+
 # Rust checks
 cd src-tauri
 cargo fmt --check
@@ -108,6 +111,33 @@ yarn tauri build
 ```
 
 Tauri automatically merges `src-tauri/tauri.windows.conf.json` on Windows and produces an NSIS installer in `src-tauri/target/release/bundle/nsis/`. The Windows SSH transport uses a bundled OpenSSL backend; no separate OpenSSL installation or OpenSSL DLLs are required on the destination computer. The installer uses Tauri's default WebView2 bootstrapper when the runtime is missing, which requires an Internet connection during installation.
+
+### Build Windows from macOS
+
+The [local cross-build script](scripts/build-windows.mjs) produces a Windows x64 NSIS installer directly on macOS, including Apple Silicon. Install Node.js 22.12 or newer, Yarn Classic 1.22, Rust stable, and Xcode Command Line Tools, then prepare the build tools once:
+
+```bash
+brew install llvm nsis
+cargo install --locked cargo-xwin --version 0.23.1
+rustup target add x86_64-pc-windows-msvc
+yarn install --frozen-lockfile
+```
+
+`cargo-xwin` 0.23.1 or newer is required. The script discovers LLVM and the Windows linker from the installed tools and caches; if its preflight reports a missing linker, install it with `brew install lld`. Xcode Command Line Tools provide Make and the macOS build toolchain; Perl must also be available on `PATH`.
+
+From the project root, run:
+
+```bash
+yarn build:windows
+```
+
+The script checks the prerequisites, obtains the Windows SDK/CRT through `cargo-xwin`, compiles the locked OpenSSL source into static Windows libraries, and builds the frontend, application, and installer. It discovers local tool and dependency paths automatically. The first run requires Internet access for dependencies and takes longer; later runs reuse the OpenSSL and SDK caches. Install JavaScript dependencies before running the command; it does not run `yarn install` for you.
+
+Each OpenSSL build is cached under `src-tauri/target/windows-cross/openssl-<version>-<fingerprint>/`, with `source`, `build`, and `install` directories, `build.log`, and a `complete` marker. The cache key includes the locked source, compiler, Windows SDK headers, and build options. The Windows SDK/CRT stays in `cargo-xwin`'s shared user cache, respecting `XWIN_CACHE_DIR` when set. The installer is written to `src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/`; setting `CARGO_TARGET_DIR` relocates both the OpenSSL cache and final build artifacts.
+
+The script checks that the executable is Windows x64 and rejects unexpected OpenSSL or MinGW runtime DLL imports. The resulting installer is unsigned. A successful cross-build confirms compilation and packaging; installation, WebView2, and SSH connections still need verification on Windows.
+
+### GitHub Windows builds
 
 The [Build Windows workflow](.github/workflows/windows.yml) starts automatically on pushes to `main` and pull requests. It runs backend tests (including SSH algorithm support), frontend helper tests, and a Windows x64 installer build. Rust dependencies are cached between runs.
 
