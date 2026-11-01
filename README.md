@@ -19,6 +19,21 @@ A desktop SSH tunnel manager built with Tauri, React, and Rust. The app keeps SS
 - macOS Dock badge with the number of active tunnels.
 - A compact macOS-style workspace with system light/dark appearance, searchable sections, and keyboard shortcuts.
 
+## Screenshots
+
+All screenshots use generated demo data: fictional servers, services, credentials, files, and logs. Click an image to view it at full size.
+
+**SSH tunnels** — local, remote, and SOCKS forwards with runtime status.
+
+[![SSH tunnel manager with local, remote, and SOCKS forwards](docs/screenshots/forwards.jpg)](docs/screenshots/forwards.jpg)
+
+| Workspaces | Tools |
+| --- | --- |
+| [![Two-pane SFTP file manager with streaming archive transfers](docs/screenshots/files.jpg)](docs/screenshots/files.jpg)<br>**SFTP files and transfer queue** | [![Interactive SSH terminal with colored shell output](docs/screenshots/terminal.jpg)](docs/screenshots/terminal.jpg)<br>**Interactive SSH terminal** |
+| [![Docker containers with published ports and quick forwarding actions](docs/screenshots/containers.jpg)](docs/screenshots/containers.jpg)<br>**Docker containers and published ports** | [![Live container log viewer with timestamped output](docs/screenshots/container-logs.jpg)](docs/screenshots/container-logs.jpg)<br>**Container logs** |
+| [![TCP and UDP port inventory with process and container details](docs/screenshots/ports.jpg)](docs/screenshots/ports.jpg)<br>**Occupied ports** | [![Saved service credentials with masked passwords](docs/screenshots/credentials.jpg)](docs/screenshots/credentials.jpg)<br>**Service credentials** |
+| [![Nginx domain configurations with enabled and TLS states](docs/screenshots/nginx-sites.jpg)](docs/screenshots/nginx-sites.jpg)<br>**Nginx domains and HTTPS** | [![Syntax-highlighted Nginx configuration editor](docs/screenshots/nginx-editor.jpg)](docs/screenshots/nginx-editor.jpg)<br>**Nginx configuration editor** |
+
 ## Tech Stack
 
 - Frontend: React 19, TypeScript, Vite, Tailwind CSS 4, shadcn/ui-style components.
