@@ -367,7 +367,7 @@ export function SftpWorkspace({ serverId, serverName, active }: { serverId: stri
             <td className="sftp-row-actions"><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={`Actions for ${side} ${entry.name}`}><EllipsisIcon /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">
               {entry.kind === "file" && <DropdownMenuItem onSelect={() => void openAction("edit", side, entry)}><FilePenLineIcon />Edit text</DropdownMenuItem>}
               <DropdownMenuItem onSelect={() => void openAction("rename", side, entry)}><PencilIcon />Rename</DropdownMenuItem>
-              {entry.kind !== "symlink" && <DropdownMenuItem onSelect={() => void openAction("chmod", side, entry)}><KeyRoundIcon />Permissions</DropdownMenuItem>}
+              {entry.kind !== "symlink" && (side === "remote" || entry.permissions !== null) && <DropdownMenuItem onSelect={() => void openAction("chmod", side, entry)}><KeyRoundIcon />Permissions</DropdownMenuItem>}
               <DropdownMenuSeparator /><DropdownMenuItem variant="destructive" onSelect={() => void openAction("delete", side, entry)}><Trash2Icon />Delete</DropdownMenuItem>
             </DropdownMenuContent></DropdownMenu></td>
           </tr>)}</tbody>
@@ -399,7 +399,7 @@ export function SftpWorkspace({ serverId, serverName, active }: { serverId: stri
         const detail = transfer.message || transfer.path || `To ${transfer.destination}`;
         return <div className="sftp-transfer" key={transfer.id} data-state={transfer.state} role="listitem" ref={(node) => { if (node) transferRows.current.set(transfer.id, node); else transferRows.current.delete(transfer.id); }}>
           <div className="sftp-transfer-icon">{transfer.state === "completed" ? <CheckCircle2Icon /> : transfer.direction === "upload" ? <ArrowUpIcon /> : <ArrowDownIcon />}</div>
-          <div className="sftp-transfer-info"><div className="sftp-transfer-title"><strong>{transfer.direction === "upload" ? "Upload" : "Download"} · {transfer.sources.length === 1 ? transfer.sources[0].split("/").pop() : `${transfer.sources.length} items`}</strong><span>{transfer.mode === "archive" ? "Archive gzip" : "SFTP"} · {transfer.state}</span></div>
+          <div className="sftp-transfer-info"><div className="sftp-transfer-title"><strong>{transfer.direction === "upload" ? "Upload" : "Download"} · {transfer.sources.length === 1 ? transfer.sources[0].split(/[\\/]/).pop() : `${transfer.sources.length} items`}</strong><span>{transfer.mode === "archive" ? "Archive gzip" : "SFTP"} · {transfer.state}</span></div>
             <div className="sftp-transfer-detail"><p title={detail}>{detail}</p><span className="sftp-transfer-stats">{formatBytes(transfer.bytes)}{transfer.total !== null ? ` / ${formatBytes(transfer.total)}` : ""} · {transfer.files} files{transfer.state === "running" && ` · ${formatBytes(transfer.bytes / elapsed)}/s${percent !== null ? ` · ${percent.toFixed(0)}%` : ""}`}</span></div>
           </div>
           {(transfer.state === "running" || transfer.state === "queued") && <Button size="icon-sm" variant="ghost" aria-label={`Cancel ${transfer.direction}`} title="Cancel transfer" onClick={() => void cancelTransfer(transfer)}><XIcon /></Button>}

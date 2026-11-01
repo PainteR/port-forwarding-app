@@ -301,7 +301,7 @@ pub async fn sftp_list(
                 .cmp(&(b.kind != EntryKind::Directory, b.name.to_lowercase()))
         });
         Ok(FileListing {
-            path: path_text(&path)?,
+            path: endpoint.path_text(&path)?,
             entries,
         })
     })
@@ -317,7 +317,7 @@ pub async fn sftp_mkdir(
     let server = server_config(&state, server_id)?;
     blocking(move || {
         let endpoint = Endpoint::new(server.as_ref())?;
-        let path = mutation_path(&path)?;
+        let path = mutation_path(&path, server.is_some())?;
         endpoint.check_parent(&path)?;
         endpoint.mkdir(&path, 0o755)
     })
@@ -334,8 +334,8 @@ pub async fn sftp_rename(
     let server = server_config(&state, server_id)?;
     blocking(move || {
         let endpoint = Endpoint::new(server.as_ref())?;
-        let source = mutation_path(&path)?;
-        let target = mutation_path(&new_path)?;
+        let source = mutation_path(&path, server.is_some())?;
+        let target = mutation_path(&new_path, server.is_some())?;
         endpoint.check_parent(&source)?;
         endpoint.check_parent(&target)?;
         if endpoint.metadata(&target)?.is_some() {
@@ -357,7 +357,7 @@ pub async fn sftp_delete(
         let endpoint = Endpoint::new(server.as_ref())?;
         let paths = paths
             .iter()
-            .map(|p| mutation_path(p))
+            .map(|p| mutation_path(p, server.is_some()))
             .collect::<Result<Vec<_>, _>>()?;
         for path in &paths {
             endpoint.check_parent(path)?;
@@ -383,7 +383,7 @@ pub async fn sftp_chmod(
     let server = server_config(&state, server_id)?;
     blocking(move || {
         let endpoint = Endpoint::new(server.as_ref())?;
-        let path = mutation_path(&path)?;
+        let path = mutation_path(&path, server.is_some())?;
         endpoint.check_no_symlink(&path)?;
         endpoint.permissions(&path, permissions)
     })
@@ -397,7 +397,10 @@ pub async fn sftp_read_text(
     path: String,
 ) -> Result<TextFile, String> {
     let server = server_config(&state, server_id)?;
-    blocking(move || Endpoint::new(server.as_ref())?.read_text(&mutation_path(&path)?)).await
+    blocking(move || {
+        Endpoint::new(server.as_ref())?.read_text(&mutation_path(&path, server.is_some())?)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -414,7 +417,7 @@ pub async fn sftp_write_text(
     let server = server_config(&state, server_id)?;
     blocking(move || {
         let endpoint = Endpoint::new(server.as_ref())?;
-        let path = mutation_path(&path)?;
+        let path = mutation_path(&path, server.is_some())?;
         let current = endpoint.read_text(&path)?;
         if current.revision != revision {
             return Err("File changed since it was opened. Reopen it before saving.".into());
@@ -446,9 +449,9 @@ pub async fn sftp_transfer(
         return Err("Select between 1 and 10000 items".into());
     }
     for source in &sources {
-        mutation_path(source)?;
+        mutation_path(source, direction == TransferDirection::Download)?;
     }
-    absolute_path(&destination)?;
+    absolute_path(&destination, direction == TransferDirection::Upload)?;
     // Register while holding the profile snapshot lock so a concurrent server edit
     // cannot leave a worker running with credentials that were just replaced.
     let (server, cancelled) = state.read(|store| {
@@ -502,7 +505,18 @@ pub fn sftp_cancel(state: State<'_, AppState>, transfer_id: String) -> Result<()
     state.transfers.cancel(&transfer_id)
 }
 
-fn absolute_path(value: &str) -> Result<PathBuf, String> {
+pub(crate) fn absolute_path(value: &str, remote: bool) -> Result<PathBuf, String> {
+    // Remote paths belong to the server's POSIX filesystem, regardless of the
+    // client's OS. On Windows, `/home/user` is rooted but not drive-absolute.
+    if remote {
+        if !value.starts_with('/') || value.contains(['\0', '\\']) {
+            return Err("An absolute POSIX path is required for remote files".into());
+        }
+        if value.split('/').any(|part| matches!(part, "." | "..")) {
+            return Err("Paths containing . or .. are not allowed".into());
+        }
+        return Ok(PathBuf::from(value));
+    }
     if value.contains('\0') || !Path::new(value).is_absolute() {
         return Err("An absolute path is required".into());
     }
@@ -516,8 +530,8 @@ fn absolute_path(value: &str) -> Result<PathBuf, String> {
     Ok(path.to_path_buf())
 }
 
-fn mutation_path(value: &str) -> Result<PathBuf, String> {
-    let path = absolute_path(value)?;
+fn mutation_path(value: &str, remote: bool) -> Result<PathBuf, String> {
+    let path = absolute_path(value, remote)?;
     if path.parent().is_none() || path.file_name().is_none() {
         return Err("The filesystem root cannot be modified or transferred".into());
     }
@@ -528,6 +542,36 @@ fn path_text(path: &Path) -> Result<String, String> {
     path.to_str()
         .map(str::to_owned)
         .ok_or_else(|| format!("Non-UTF-8 filename is not supported: {}", path.display()))
+}
+
+pub(crate) fn remote_path_text(path: &Path) -> Result<String, String> {
+    let text = path_text(path)?;
+    // PathBuf::join and ssh2::Sftp::readdir use native separators. ssh2 itself
+    // translates them for SFTP; commands and serialized paths need the same rule.
+    #[cfg(windows)]
+    let text = text.replace('\\', "/");
+    Ok(text)
+}
+
+pub(crate) fn set_local_modified(path: &Path, modified: u64) -> Result<(), String> {
+    let time = UNIX_EPOCH
+        .checked_add(Duration::from_secs(modified))
+        .ok_or("Invalid modification time")?;
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_WRITE_ATTRIBUTES permits timestamp changes without requiring
+        // content write access; BACKUP_SEMANTICS also permits directory handles.
+        OpenOptions::new()
+            .write(true)
+            .access_mode(0x0100)
+            .custom_flags(0x02000000)
+            .open(path)
+    };
+    #[cfg(not(windows))]
+    let file = File::open(path);
+    file.and_then(|file| file.set_times(fs::FileTimes::new().set_modified(time)))
+        .map_err(|e| format!("Cannot preserve modification time: {e}"))
 }
 fn revision(bytes: &[u8]) -> String {
     let mut hasher = DefaultHasher::new();
@@ -559,7 +603,7 @@ fn remote_entry(path: &Path, stat: FileStat) -> Result<FileEntry, String> {
             .file_name()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default(),
-        path: path_text(path)?,
+        path: remote_path_text(path)?,
         kind: stat_mode(stat.perm.unwrap_or(0)),
         size: stat.size.unwrap_or(0),
         modified: stat.mtime,
@@ -584,6 +628,13 @@ impl Endpoint {
             .transpose()?;
         Ok(Self { remote })
     }
+    fn path_text(&self, path: &Path) -> Result<String, String> {
+        if self.remote.is_some() {
+            remote_path_text(path)
+        } else {
+            path_text(path)
+        }
+    }
     fn directory(&self, path: Option<&str>) -> Result<PathBuf, String> {
         let path = path.filter(|p| !p.is_empty());
         if let Some((_, sftp)) = &self.remote {
@@ -597,7 +648,7 @@ impl Endpoint {
         } else {
             let path = path
                 .map(PathBuf::from)
-                .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+                .or_else(ssh::home_dir)
                 .ok_or("Home directory unavailable")?;
             let path =
                 fs::canonicalize(&path).map_err(|e| format!("Cannot open directory: {e}"))?;
@@ -749,6 +800,11 @@ impl Endpoint {
         let mut current = PathBuf::new();
         for component in path.components() {
             current.push(component);
+            // A Windows drive/UNC prefix alone is not an inspectable path. Its
+            // root becomes complete after the following RootDir component.
+            if matches!(component, Component::Prefix(_)) {
+                continue;
+            }
             let meta = self.required_metadata(&current)?;
             if meta.kind == EntryKind::Symlink {
                 return Err(format!(
@@ -768,8 +824,17 @@ impl Endpoint {
                 .map_err(|e| format!("Cannot create {}: {e}", path.display()))
         } else {
             fs::create_dir(path).map_err(|e| format!("Cannot create {}: {e}", path.display()))?;
-            self.permissions(path, permissions)
+            self.preserve_permissions(path, permissions)
         }
+    }
+    fn preserve_permissions(&self, path: &Path, permissions: u32) -> Result<(), String> {
+        // Windows ACLs do not map to POSIX mode bits. Keep inherited ACLs for
+        // local files while still applying modes to remote files over SFTP.
+        #[cfg(not(unix))]
+        if self.remote.is_none() {
+            return Ok(());
+        }
+        self.permissions(path, permissions)
     }
     fn permissions(&self, path: &Path, permissions: u32) -> Result<(), String> {
         if let Some((_, sftp)) = &self.remote {
@@ -802,12 +867,7 @@ impl Endpoint {
             sftp.setstat(path, stat)
                 .map_err(|e| format!("Cannot preserve modification time: {e}"))
         } else {
-            let time = UNIX_EPOCH
-                .checked_add(Duration::from_secs(modified))
-                .ok_or("Invalid modification time")?;
-            File::open(path)
-                .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(time)))
-                .map_err(|e| format!("Cannot preserve modification time: {e}"))
+            set_local_modified(path, modified)
         }
     }
     fn rename(&self, source: &Path, target: &Path, overwrite: bool) -> Result<(), String> {
@@ -902,13 +962,7 @@ impl Endpoint {
     }
     fn publish(&self, temp: &Path, target: &Path, overwrite: bool) -> Result<(), String> {
         if !overwrite && self.remote.is_none() {
-            fs::hard_link(temp, target).map_err(|e| {
-                format!(
-                    "Cannot publish {} without overwriting: {e}",
-                    target.display()
-                )
-            })?;
-            self.unlink(temp)
+            rename_local_exclusive(temp, target)
         } else {
             self.rename(temp, target, overwrite)
         }
@@ -931,7 +985,7 @@ impl Endpoint {
             let mut file = self.writer(&temp, mode)?;
             file.write_all(bytes).map_err(|e| e.to_string())?;
             file.finish()?;
-            self.permissions(&temp, mode)?;
+            self.preserve_permissions(&temp, mode)?;
             self.publish(&temp, path, overwrite)
         })();
         if result.is_err() {
@@ -982,7 +1036,36 @@ pub(crate) fn rename_local_exclusive(source: &Path, target: &Path) -> Result<(),
         ))
     }
 }
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(windows)]
+pub(crate) fn rename_local_exclusive(source: &Path, target: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn MoveFileExW(source: *const u16, target: *const u16, flags: u32) -> i32;
+    }
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let target = target
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    // Without MOVEFILE_REPLACE_EXISTING the operation atomically rejects an
+    // existing destination. A separate exists() check would leave a race.
+    if unsafe { MoveFileExW(source.as_ptr(), target.as_ptr(), 0) } != 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "Cannot rename without overwriting: {}",
+            std::io::Error::last_os_error()
+        ))
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 pub(crate) fn rename_local_exclusive(source: &Path, target: &Path) -> Result<(), String> {
     if fs::symlink_metadata(target).is_ok() {
         return Err("Destination already exists".into());
@@ -1103,7 +1186,7 @@ pub(crate) fn transfer_sftp(
     let mut names = HashSet::new();
     for path in &request.sources {
         control.check()?;
-        let path = mutation_path(path)?;
+        let path = mutation_path(path, request.direction == TransferDirection::Download)?;
         source.check_no_symlink(&path)?;
         let name = path.file_name().ok_or("Source has no filename")?;
         if !names.insert(name.to_os_string()) {
@@ -1179,7 +1262,7 @@ pub(crate) fn transfer_sftp(
                 ));
             }
             target.modified(&temp, item.entry.modified)?;
-            target.permissions(&temp, item.entry.permissions.unwrap_or(0o644) & 0o777)?;
+            target.preserve_permissions(&temp, item.entry.permissions.unwrap_or(0o644) & 0o777)?;
             control.check()?;
             target.publish(&temp, &item.target, request.overwrite)
         })();
@@ -1198,7 +1281,7 @@ pub(crate) fn transfer_sftp(
         control.check()?;
         target.check_no_symlink(&item.target)?;
         target.modified(&item.target, item.entry.modified)?;
-        target.permissions(
+        target.preserve_permissions(
             &item.target,
             item.entry.permissions.unwrap_or(0o755) & 0o777,
         )?;
@@ -1247,11 +1330,16 @@ mod tests {
     }
     #[test]
     fn paths_require_absolute_and_reject_roots_and_traversal() {
-        assert!(absolute_path("relative").is_err());
-        assert!(mutation_path("/").is_err());
-        assert!(absolute_path("/tmp/../etc").is_err());
-        assert!(absolute_path("/tmp/bad\0name").is_err());
-        assert!(mutation_path("/tmp/space ' quote").is_ok());
+        assert!(absolute_path("relative", true).is_err());
+        assert!(mutation_path("/", true).is_err());
+        assert!(absolute_path("/tmp/../etc", true).is_err());
+        assert!(absolute_path("/tmp/bad\0name", true).is_err());
+        assert!(absolute_path("/tmp/./name", true).is_err());
+        assert!(absolute_path("/tmp\\name", true).is_err());
+        assert!(mutation_path("/tmp/space ' quote", true).is_ok());
+        assert!(absolute_path("C:\\Users\\name", true).is_err());
+        let temp = Temp::new();
+        assert!(absolute_path(temp.0.to_str().unwrap(), false).is_ok());
     }
     #[test]
     fn atomic_write_preserves_existing_on_conflict() {
@@ -1264,6 +1352,52 @@ mod tests {
         endpoint.write_atomic(&path, b"new", 0o644, true).unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"new");
         assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 1);
+    }
+    #[test]
+    fn local_directories_and_files_preserve_times_without_posix_modes() {
+        let temp = Temp::new();
+        let endpoint = Endpoint::new(None).unwrap();
+        let directory = temp.0.join("new folder");
+        endpoint.mkdir(&directory, 0o755).unwrap();
+        let file = directory.join("file.txt");
+        endpoint.write_atomic(&file, b"text", 0o644, false).unwrap();
+        endpoint.modified(&file, Some(1_700_000_000)).unwrap();
+        endpoint.modified(&directory, Some(1_700_000_001)).unwrap();
+        assert_eq!(
+            endpoint.required_metadata(&file).unwrap().modified,
+            Some(1_700_000_000)
+        );
+        assert_eq!(
+            endpoint.required_metadata(&directory).unwrap().modified,
+            Some(1_700_000_001)
+        );
+        assert_eq!(endpoint.read_text(&file).unwrap().content, "text");
+    }
+    #[test]
+    fn exclusive_rename_preserves_existing_file_and_directory() {
+        let temp = Temp::new();
+        for directory in [false, true] {
+            let source = temp.0.join(if directory { "source-dir" } else { "source" });
+            let target = temp.0.join(if directory { "target-dir" } else { "target" });
+            if directory {
+                fs::create_dir(&source).unwrap();
+                fs::create_dir(&target).unwrap();
+            } else {
+                fs::write(&source, b"source").unwrap();
+                fs::write(&target, b"target").unwrap();
+            }
+            assert!(rename_local_exclusive(&source, &target).is_err());
+            assert!(source.exists());
+            if !directory {
+                assert_eq!(fs::read(&target).unwrap(), b"target");
+            }
+            fs::remove_dir_all(&target)
+                .or_else(|_| fs::remove_file(&target))
+                .unwrap();
+            rename_local_exclusive(&source, &target).unwrap();
+            assert!(!source.exists());
+            assert!(target.exists());
+        }
     }
     #[test]
     fn text_revision_changes_and_binary_or_oversized_is_rejected() {

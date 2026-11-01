@@ -1,5 +1,4 @@
 use std::{
-    env,
     io::{Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
@@ -8,7 +7,7 @@ use std::{
 
 use chrono::Utc;
 use serde_json::Value;
-use ssh2::{CheckResult, KnownHostFileKind, Session};
+use ssh2::{CheckResult, ErrorCode, KnownHostFileKind, MethodType, Session};
 
 use crate::models::{
     docker_cache_key, AuthConfig, DockerCache, DockerContainer, DockerPort, ServerConfig,
@@ -48,7 +47,7 @@ fn connect_with_io_timeout(
     session.set_timeout(timeout.as_millis().min(u32::MAX as u128) as u32);
     session
         .handshake()
-        .map_err(|error| format!("SSH handshake failed: {error}"))?;
+        .map_err(|error| handshake_error(&session, server, &error))?;
 
     verify_known_host(&session, server)?;
     authenticate(&session, server)?;
@@ -62,6 +61,27 @@ fn connect_with_io_timeout(
     }
 
     Ok(session)
+}
+
+fn handshake_error(session: &Session, server: &ServerConfig, error: &ssh2::Error) -> String {
+    let mut message = format!(
+        "SSH handshake failed for {}:{}: {error}",
+        server.host, server.port
+    );
+    if matches!(error.code(), ErrorCode::Session(-5 | -8)) {
+        // This happens before authentication; changing the password or private
+        // key cannot fix a server/client algorithm mismatch.
+        for (label, method) in [
+            ("Client key exchange algorithms", MethodType::Kex),
+            ("Client host key algorithms", MethodType::HostKey),
+        ] {
+            if let Ok(algorithms) = session.supported_algs(method) {
+                message.push_str(&format!(". {label}: {}", algorithms.join(", ")));
+            }
+        }
+        message.push_str(". Key exchange failed before authentication; check the server SSH logs for algorithm compatibility or a connection rejection.");
+    }
+    message
 }
 
 pub fn exec(server: &ServerConfig, command: &str) -> Result<CommandOutput, String> {
@@ -341,8 +361,10 @@ fn verify_known_host(session: &Session, server: &ServerConfig) -> Result<(), Str
         CheckResult::Match => Ok(()),
         CheckResult::NotFound => Ok(()),
         CheckResult::Mismatch => Err(format!(
-            "Host key mismatch for {}:{}. Check ~/.ssh/known_hosts.",
-            server.host, server.port
+            "Host key mismatch for {}:{}. Check {}.",
+            server.host,
+            server.port,
+            path.display()
         )),
         CheckResult::Failure => Err(format!(
             "Failed to verify host key for {}:{}",
@@ -355,7 +377,7 @@ fn authenticate(session: &Session, server: &ServerConfig) -> Result<(), String> 
     match &server.auth {
         AuthConfig::Agent => session
             .userauth_agent(&server.username)
-            .map_err(|error| format!("SSH agent authentication failed: {error}"))?,
+            .map_err(agent_auth_error)?,
         AuthConfig::KeyFile {
             private_key_path,
             passphrase,
@@ -388,12 +410,23 @@ fn authenticate(session: &Session, server: &ServerConfig) -> Result<(), String> 
 
 fn known_hosts_path() -> Option<PathBuf> {
     #[cfg(test)]
-    if let Some(path) = env::var_os("SFTP_TEST_KNOWN_HOSTS") {
+    if let Some(path) = std::env::var_os("SFTP_TEST_KNOWN_HOSTS") {
         return Some(PathBuf::from(path));
     }
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(".ssh").join("known_hosts"))
+    home_dir().map(|home| home.join(".ssh").join("known_hosts"))
+}
+
+pub(crate) fn home_dir() -> Option<PathBuf> {
+    // Uses the Windows profile API, including when HOME is unset or points at
+    // a Git Bash/WSL home, and the account home directory on Unix.
+    dirs::home_dir()
+}
+
+fn agent_auth_error(error: ssh2::Error) -> String {
+    let message = format!("SSH agent authentication failed: {error}");
+    #[cfg(windows)]
+    let message = format!("{message}. Start the OpenSSH Authentication Agent service and load a key with ssh-add, or select private key file authentication.");
+    message
 }
 
 #[derive(Debug, Clone)]
@@ -401,4 +434,26 @@ pub struct CommandOutput {
     pub stdout: String,
     pub stderr: String,
     pub exit_status: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ssh_supports_modern_server_algorithms() {
+        // Run on Windows CI too: the default WinCNG build cannot pass this.
+        let session = Session::new().unwrap();
+        let kex = session.supported_algs(MethodType::Kex).unwrap();
+        let host_keys = session.supported_algs(MethodType::HostKey).unwrap();
+        assert!(kex.contains(&"curve25519-sha256"), "KEX: {kex:?}");
+        assert!(
+            host_keys.contains(&"ssh-ed25519"),
+            "Host keys: {host_keys:?}"
+        );
+        assert!(
+            host_keys.contains(&"ecdsa-sha2-nistp256"),
+            "Host keys: {host_keys:?}"
+        );
+    }
 }

@@ -78,11 +78,7 @@ fn path_bytes(path: &Path) -> Result<Vec<u8>, String> {
         path.as_os_str().as_bytes().to_vec()
     };
     #[cfg(not(unix))]
-    let bytes = path
-        .to_str()
-        .ok_or("SFTP filename is not UTF-8")?
-        .as_bytes()
-        .to_vec();
+    let bytes = crate::sftp::remote_path_text(path)?.into_bytes();
     if bytes.is_empty() || bytes.contains(&0) || bytes.len() > MAX_PACKET - 64 {
         return Err("Invalid or oversized SFTP rename path".into());
     }
@@ -241,6 +237,13 @@ fn parse_status(bytes: &[u8], request_id: u32) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn atomic_rename_serializes_remote_paths_with_posix_separators() {
+        let source = Path::new("/srv/uploads").join("temporary");
+        assert_eq!(path_bytes(&source).unwrap(), b"/srv/uploads/temporary");
+    }
     fn version(extension: bool) -> Vec<u8> {
         let mut packet = vec![2];
         packet.extend_from_slice(&3u32.to_be_bytes());

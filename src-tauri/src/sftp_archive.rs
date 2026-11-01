@@ -45,7 +45,7 @@ fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn root_names(sources: &[String]) -> Result<Vec<String>, String> {
+fn root_names(sources: &[String], remote: bool) -> Result<Vec<String>, String> {
     if sources.is_empty() {
         return Err("Select at least one source".into());
     }
@@ -53,15 +53,7 @@ fn root_names(sources: &[String]) -> Result<Vec<String>, String> {
     sources
         .iter()
         .map(|source| {
-            let path = Path::new(source);
-            if !path.is_absolute()
-                || source.contains('\0')
-                || path
-                    .components()
-                    .any(|part| matches!(part, Component::ParentDir))
-            {
-                return Err("Archive sources must be absolute paths without '..'".into());
-            }
+            let path = crate::sftp::absolute_path(source, remote)?;
             let name = path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -82,7 +74,7 @@ fn upload(
     request: &TransferRequest,
     control: &TransferControl,
 ) -> Result<(), String> {
-    let names = root_names(&request.sources)?;
+    let names = root_names(&request.sources, false)?;
     // Resolve the destination once; archive publication never traverses its children.
     let destination = sftp
         .realpath(Path::new(&request.destination))
@@ -103,7 +95,7 @@ fn upload(
         control.check()?;
         let command = format!(
             "umask 000; exec tar -xzf - -C {} --no-same-owner --no-same-permissions",
-            quote(stage.to_str().ok_or("Destination is not UTF-8")?),
+            quote(&crate::sftp::remote_path_text(&stage)?),
         );
         let mut channel = session.channel_session().map_err(message)?;
         channel.exec(&command).map_err(message)?;
@@ -270,7 +262,7 @@ fn download(
     request: &TransferRequest,
     control: &TransferControl,
 ) -> Result<(), String> {
-    let names = root_names(&request.sources)?;
+    let names = root_names(&request.sources, true)?;
     let destination = fs::canonicalize(&request.destination).map_err(message)?;
     if !destination.is_dir() {
         return Err("Download destination must be a directory".into());
@@ -312,7 +304,7 @@ fn download(
     let result = (|| {
         let command = format!(
             "export COPYFILE_DISABLE=1; exec tar -czf - -C {} -- {}",
-            quote(parent.to_str().ok_or("Source is not UTF-8")?),
+            quote(&crate::sftp::remote_path_text(parent)?),
             names
                 .iter()
                 .map(|name| quote(name))
@@ -519,12 +511,7 @@ fn unpack_archive<R: Read>(
     for (path, mode, mtime) in directories {
         control.check()?;
         let destination = stage.join(path);
-        let time = std::time::UNIX_EPOCH
-            .checked_add(Duration::from_secs(mtime))
-            .ok_or("Invalid archive modification time")?;
-        File::open(&destination)
-            .and_then(|file| file.set_times(fs::FileTimes::new().set_modified(time)))
-            .map_err(message)?;
+        crate::sftp::set_local_modified(&destination, mtime)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -936,16 +923,36 @@ mod tests {
 
     #[test]
     fn archive_names_and_paths_reject_traversal_and_duplicates() {
-        assert!(root_names(&["/one/a".into(), "/two/a".into()]).is_err());
-        assert!(root_names(&["/".into()]).is_err());
-        assert!(root_names(&["/one/../a".into()]).is_err());
-        assert!(root_names(&["relative".into()]).is_err());
+        assert!(root_names(&["/one/a".into(), "/two/a".into()], true).is_err());
+        assert!(root_names(&["/".into()], true).is_err());
+        assert!(root_names(&["/one/../a".into()], true).is_err());
+        assert!(root_names(&["relative".into()], true).is_err());
+        assert_eq!(
+            root_names(&["/home/user/project".into()], true).unwrap(),
+            ["project"]
+        );
         let roots = vec!["project".into()];
         for path in ["../project/a", "/project/a", "project/../../a", "other/a"] {
             assert!(!safe_archive_path(Path::new(path), &roots), "{path}");
         }
         assert!(safe_archive_path(Path::new("project/a b/'file'"), &roots));
         assert_eq!(quote("a'b\n;$(touch bad)"), "'a'\\''b\n;$(touch bad)'");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn archive_distinguishes_local_drive_paths_from_remote_posix_paths() {
+        assert_eq!(
+            root_names(&[r"C:\Users\user\project".into()], false).unwrap(),
+            ["project"]
+        );
+        assert!(root_names(&["/home/user/project".into()], false).is_err());
+        assert!(root_names(&[r"C:\Users\user\project".into()], true).is_err());
+        let remote_stage = Path::new("/srv/uploads").join(".stage");
+        assert_eq!(
+            crate::sftp::remote_path_text(&remote_stage).unwrap(),
+            "/srv/uploads/.stage"
+        );
     }
 
     #[test]

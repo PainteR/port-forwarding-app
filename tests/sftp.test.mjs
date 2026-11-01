@@ -30,6 +30,19 @@ test("permissions accept octal modes and omit file type bits", () => {
   assert.equal(formatPermissions(null), "—");
 });
 
+test("Windows local navigation preserves drive, UNC, and long-path roots", () => {
+  const roots = ["C:\\", "C:/", "\\\\server\\share\\", "\\\\?\\C:\\", "\\\\?\\UNC\\server\\share\\"];
+  for (const root of roots) {
+    const separator = root.includes("\\") ? "\\" : "/";
+    assert.equal(parentPath(root), root, root);
+    assert.equal(joinPath(root, "folder"), `${root}folder`, root);
+    assert.equal(parentPath(`${root}folder${separator}nested${separator}`), `${root}folder`, root);
+    assert.equal(parentPath(`${root}folder`), root, root);
+  }
+  assert.equal(joinPath("C:\\Users\\painter", "файлы"), "C:\\Users\\painter\\файлы");
+  assert.equal(parentPath("/home/painter"), "/home");
+});
+
 test("archive progress remains indeterminate until a total is known", () => {
   assert.equal(transferPercent(120, null), null);
   assert.equal(transferPercent(0, 0), null);

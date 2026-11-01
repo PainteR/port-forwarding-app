@@ -23,7 +23,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="port-forward-sftp-test-", dir=parent) as temporary:
         root = Path(temporary)
         for name in ("host_key", "user_key"):
-            subprocess.run(["ssh-keygen", "-q", "-t", "rsa", "-b", "2048", "-N", "", "-m", "PEM", "-f", str(root / name)], check=True)
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(root / name)], check=True)
         (root / "authorized_keys").write_text((root / "user_key.pub").read_text())
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
@@ -36,6 +36,10 @@ def main():
             f"AuthorizedKeysFile {root}/authorized_keys", f"AllowUsers {getpass.getuser()}",
             "StrictModes no", "UsePAM no", "PasswordAuthentication no",
             "KbdInteractiveAuthentication no", "PubkeyAuthentication yes",
+            # Exercise the modern algorithms missing from the default WinCNG
+            # backend instead of silently falling back to RSA/Diffie-Hellman.
+            "KexAlgorithms curve25519-sha256", "HostKeyAlgorithms ssh-ed25519",
+            "PubkeyAcceptedAlgorithms ssh-ed25519",
             "Subsystem sftp internal-sftp", "LogLevel ERROR", "UseDNS no",
         ]) + "\n")
         subprocess.run([sshd, "-t", "-f", str(config)], check=True)

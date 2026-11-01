@@ -103,6 +103,9 @@ import { cn } from "@/lib/utils";
 
 const SshTerminal = lazy(() => import("@/components/ssh-terminal").then((module) => ({ default: module.SshTerminal })));
 const SftpWorkspace = lazy(() => import("@/components/sftp-workspace").then((module) => ({ default: module.SftpWorkspace })));
+const shortcutLabel = (key: string, shift = false) => /Mac/.test(navigator.platform)
+  ? `${shift ? "⇧" : ""}⌘${key}`
+  : `Ctrl+${shift ? "Shift+" : ""}${key}`;
 
 type AuthConfig =
   | { method: "agent" }
@@ -1099,7 +1102,7 @@ function App() {
               className="ml-auto"
               onClick={() => setSidebarOpen(false)}
               size="icon-sm"
-              title="Hide sidebar (⌘B)"
+              title={`Hide sidebar (${shortcutLabel("B")})`}
               variant="ghost"
             >
               <PanelLeftIcon />
@@ -1113,7 +1116,7 @@ function App() {
                 data-active={activeSection === id}
                 key={id}
                 onClick={() => setActiveSection(id)}
-                title={`${label} (⌘${index + 1})`}
+                title={`${label} (${shortcutLabel(String(index + 1))})`}
                 type="button"
               >
                 <Icon aria-hidden="true" className="size-4" />
@@ -1142,7 +1145,7 @@ function App() {
               disabled={nginxBusy}
               onClick={openCreateServerDialog}
               size="icon-sm"
-              title="Add server (⇧⌘N)"
+              title={`Add server (${shortcutLabel("N", true)})`}
               variant="ghost"
             >
               <PlusIcon />
@@ -1276,7 +1279,7 @@ function App() {
                 aria-label="Show sidebar"
                 onClick={() => setSidebarOpen(true)}
                 size="icon-sm"
-                title="Show sidebar (⌘B)"
+                title={`Show sidebar (${shortcutLabel("B")})`}
                 variant="ghost"
               >
                 <PanelLeftIcon />
@@ -1348,7 +1351,7 @@ function App() {
                   <PlusIcon data-icon="inline-start" />
                   Add your first server
                 </Button>
-                <span className="mt-3 text-xs text-muted-foreground">⇧⌘N</span>
+                <span className="mt-3 text-xs text-muted-foreground">{shortcutLabel("N", true)}</span>
               </div>
             ) : (
               <>
@@ -1369,7 +1372,7 @@ function App() {
                     </div>
                     <Button
                       onClick={openCreateForwardDialog}
-                      title="New forward (⌘N)"
+                      title={`New forward (${shortcutLabel("N")})`}
                     >
                       <PlusIcon data-icon="inline-start" />
                       New forward
