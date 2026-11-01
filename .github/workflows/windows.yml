@@ -1,0 +1,73 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Windows x64 installer
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Set up Yarn Classic
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          cache-on-failure: true
+      - name: Set up Perl for bundled OpenSSL
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'C:\Strawberry\perl\bin\perl.exe')) {
+            throw 'Strawberry Perl is required to build bundled OpenSSL'
+          }
+          'C:\Strawberry\perl\bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install frontend dependencies
+        run: yarn install --frozen-lockfile
+      - name: Check Rust formatting
+        working-directory: src-tauri
+        run: cargo fmt --check
+      - name: Test Rust backend and SSH algorithms
+        working-directory: src-tauri
+        run: cargo test --locked
+      - name: Test frontend helpers
+        run: node --test tests/terminal-input.test.mjs tests/sftp.test.mjs tests/nginx-template.test.mjs
+      - name: Build Windows installer
+        run: yarn tauri build --ci -- --locked
+      - name: Upload Windows installer
+        id: installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: port-forward-windows-x64
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 30
+      - name: Add download link to build summary
+        shell: pwsh
+        env:
+          INSTALLER_URL: ${{ steps.installer.outputs.artifact-url }}
+        run: |
+          "### Windows x64" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          "[Download installer]($env:INSTALLER_URL) (retained for 30 days)." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append

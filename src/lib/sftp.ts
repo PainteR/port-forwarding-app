@@ -20,13 +20,31 @@ export type TransferEvent = {
   message: string | null;
 };
 
+function windowsPath(path: string): { path: string; root: string; separator: string } | null {
+  if (!/^(?:[a-z]:[\\/]|\\\\)/i.test(path)) return null;
+  const normalized = path.replace(/\\/g, "/");
+  const root = normalized.match(/^(?:\/\/\?\/)?[a-z]:\//i)?.[0]
+    ?? normalized.match(/^\/\/(?:\?\/UNC\/)?[^/]+\/[^/]+(?:\/|$)/i)?.[0];
+  if (!root) return null;
+  return { path: normalized, root: `${root.replace(/\/+$/, "")}/`, separator: path.includes("\\") ? "\\" : "/" };
+}
+
 export function parentPath(path: string): string {
+  const windows = windowsPath(path);
+  if (windows) {
+    const clean = windows.path.replace(/\/+$/, "");
+    const index = clean.lastIndexOf("/");
+    const parent = index < windows.root.length ? windows.root : clean.slice(0, index);
+    return parent.replace(/\//g, windows.separator);
+  }
   const clean = path.replace(/\/+$/, "") || "/";
   const index = clean.lastIndexOf("/");
   return index <= 0 ? "/" : clean.slice(0, index);
 }
 
 export function joinPath(directory: string, name: string): string {
+  const windows = windowsPath(directory);
+  if (windows) return `${windows.path.replace(/\/+$/, "")}/${name}`.replace(/\//g, windows.separator);
   return `${directory.replace(/\/+$/, "")}/${name}`;
 }
 

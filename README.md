@@ -39,11 +39,11 @@ All screenshots use generated demo data: fictional servers, services, credential
 - Frontend: React 19, TypeScript, Vite, Tailwind CSS 4, shadcn/ui-style components.
 - Desktop/runtime: Tauri 2.
 - Backend: Rust, `ssh2`, Tauri commands.
-- Bundles: macOS `.app` and `.dmg`.
+- Bundles: macOS `.app` and `.dmg`; Windows NSIS `-setup.exe`.
 
 ## Requirements
 
-- Node.js and Yarn.
+- Node.js 22.12 or newer and Yarn Classic 1.22.
 - Rust stable and Cargo.
 - Tauri platform prerequisites for your OS. On macOS, this usually means Xcode Command Line Tools.
 - SSH access to the servers you want to configure.
@@ -90,6 +90,28 @@ yarn test:nginx:config
 The remote-helper tests use temporary directories and fake executables. The Docker check uses temporary certificate fixtures and an isolated, read-only container; neither check changes a configured SSH server or issues a public certificate.
 
 After `yarn tauri build`, build artifacts are written under `src-tauri/target/release/bundle/`.
+
+### Windows Build
+
+Build on Windows 10/11 x64 using PowerShell with these prerequisites:
+
+- [Microsoft C++ Build Tools and WebView2](https://v2.tauri.app/start/prerequisites/#windows). In the Build Tools installer select **Desktop development with C++**, including the Windows SDK.
+- Rust stable with the MSVC toolchain: `rustup default stable-x86_64-pc-windows-msvc`.
+- Node.js 22.12 or newer and Yarn Classic 1.22.
+- [Strawberry Perl](https://strawberryperl.com/) on `PATH`, required to compile the bundled OpenSSL. Restart PowerShell after installing it and check `perl --version`.
+
+```powershell
+yarn install --frozen-lockfile
+yarn tauri dev
+# Or build the installer:
+yarn tauri build
+```
+
+Tauri automatically merges `src-tauri/tauri.windows.conf.json` on Windows and produces an NSIS installer in `src-tauri/target/release/bundle/nsis/`. The Windows SSH transport uses a bundled OpenSSL backend; no separate OpenSSL installation or OpenSSL DLLs are required on the destination computer. The installer uses Tauri's default WebView2 bootstrapper when the runtime is missing, which requires an Internet connection during installation.
+
+The [Build Windows workflow](.github/workflows/windows.yml) starts automatically on pushes to `main` and pull requests. It runs backend tests (including SSH algorithm support), frontend helper tests, and a Windows x64 installer build. Rust dependencies are cached between runs.
+
+To download a build, open [GitHub Actions](https://github.com/PainteR/port-forwarding-app/actions/workflows/windows.yml), select a successful run, and download `port-forward-windows-x64` under **Artifacts** (or use the download link in the run summary). Unzip it and run the `-setup.exe` installer. Artifacts are kept for 30 days. To build the latest code manually, select **Run workflow**, choose a branch, and start the run. No signing secrets are required. Connecting to your server still requires a runtime check on Windows.
 
 ## Usage
 
@@ -289,6 +311,7 @@ Debug builds register `tauri-plugin-mcp-bridge`; release builds do not include i
 
 - `Tauri runtime is required for backend commands`: the app was opened through `yarn dev` in a browser. Run `yarn tauri dev`.
 - `Host key mismatch`: the server key differs from the entry in `~/.ssh/known_hosts`; verify the server and update known_hosts manually.
+- `SSH handshake failed: [Session(-5)] Unable to exchange encryption keys`: the failure happens before password/key authentication. A Windows build using libssh2's default WinCNG backend may lack algorithms required by the server. Rebuild this version with its bundled OpenSSL backend; if it persists, compare `ssh -vvv -p <port> <user>@<host>` on the same computer with the app's handshake diagnostics. Check the host, SSH port, and server logs. Do not enable obsolete server algorithms as a workaround.
 - `Local port ... is unavailable`: the port is busy. For local and dynamic forwards, the app tries fallback ports from `50000-58000`; if no free port is available, the tunnel will not start.
 - Empty Docker section: the server has no running containers, Docker is not installed, or the user does not have permission to use the Docker CLI.
 - `Password authentication selected but no password was provided`: the profile uses password authentication but was saved without a password.

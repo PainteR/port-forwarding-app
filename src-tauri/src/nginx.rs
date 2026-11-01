@@ -349,8 +349,9 @@ mod tests {
         });
         let input = remote_input(&source, &payload).unwrap();
         assert!(input.len() > 35_000);
-        let mut child = Command::new("python3")
-            .args(["-c", REMOTE_BOOTSTRAP])
+        let python = if cfg!(windows) { "python" } else { "python3" };
+        let mut child = Command::new(python)
+            .args(["-X", "utf8", "-c", REMOTE_BOOTSTRAP])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
